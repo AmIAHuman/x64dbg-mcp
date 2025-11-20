@@ -1,0 +1,183 @@
+#include "DebugController.h"
+#include "../core/Logger.h"
+#include "../core/Exceptions.h"
+#include "../core/X64DBGBridge.h"
+
+namespace MCP {
+
+DebugController& DebugController::Instance() {
+    static DebugController instance;
+    return instance;
+}
+
+DebugState DebugController::GetState() const {
+    if (!DbgIsDebugging()) {
+        return DebugState::Stopped;
+    }
+    
+    if (DbgIsRunning()) {
+        return DebugState::Running;
+    }
+    
+    return DebugState::Paused;
+}
+
+uint64_t DebugController::GetInstructionPointer() const {
+    if (!IsDebugging()) {
+        throw DebuggerNotRunningException();
+    }
+    
+    // 使用 x64dbg API 获取 RIP/EIP
+    duint rip = DbgValFromString("cip");
+    return static_cast<uint64_t>(rip);
+}
+
+bool DebugController::Run() {
+    if (!IsDebugging()) {
+        throw DebuggerNotRunningException();
+    }
+    
+    Logger::Debug("Executing run command");
+    return ExecuteCommand("run");
+}
+
+bool DebugController::Pause() {
+    if (!IsDebugging()) {
+        throw DebuggerNotRunningException();
+    }
+    
+    if (IsPaused()) {
+        Logger::Warning("Debugger is already paused");
+        return true;
+    }
+    
+    Logger::Debug("Executing pause command");
+    return ExecuteCommand("pause");
+}
+
+uint64_t DebugController::StepInto() {
+    if (!IsPaused()) {
+        throw DebuggerNotPausedException();
+    }
+    
+    Logger::Debug("Executing step into");
+    
+    if (!ExecuteCommand("sti")) {
+        throw MCPException("Step into failed");
+    }
+    
+    if (!WaitForPause()) {
+        throw OperationTimeoutException("Step into timeout");
+    }
+    
+    return GetInstructionPointer();
+}
+
+uint64_t DebugController::StepOver() {
+    if (!IsPaused()) {
+        throw DebuggerNotPausedException();
+    }
+    
+    Logger::Debug("Executing step over");
+    
+    if (!ExecuteCommand("sto")) {
+        throw MCPException("Step over failed");
+    }
+    
+    if (!WaitForPause()) {
+        throw OperationTimeoutException("Step over timeout");
+    }
+    
+    return GetInstructionPointer();
+}
+
+uint64_t DebugController::StepOut() {
+    if (!IsPaused()) {
+        throw DebuggerNotPausedException();
+    }
+    
+    Logger::Debug("Executing step out");
+    
+    if (!ExecuteCommand("rtr")) {
+        throw MCPException("Step out failed");
+    }
+    
+    if (!WaitForPause()) {
+        throw OperationTimeoutException("Step out timeout");
+    }
+    
+    return GetInstructionPointer();
+}
+
+bool DebugController::RunToAddress(uint64_t address) {
+    if (!IsPaused()) {
+        throw DebuggerNotPausedException();
+    }
+    
+    char command[64];
+    sprintf_s(command, "rtu %llX", address);
+    
+    Logger::Debug("Executing run to address: 0x{:X}", address);
+    return ExecuteCommand(command);
+}
+
+bool DebugController::Restart() {
+    if (!IsDebugging()) {
+        throw DebuggerNotRunningException();
+    }
+    
+    Logger::Debug("Restarting debugger");
+    return ExecuteCommand("restart");
+}
+
+bool DebugController::Stop() {
+    if (!IsDebugging()) {
+        Logger::Warning("Debugger is not running");
+        return true;
+    }
+    
+    Logger::Debug("Stopping debugger");
+    return ExecuteCommand("stop");
+}
+
+bool DebugController::IsDebugging() const {
+    return DbgIsDebugging();
+}
+
+bool DebugController::IsPaused() const {
+    return IsDebugging() && !DbgIsRunning();
+}
+
+bool DebugController::ExecuteCommand(const std::string& command) {
+    Logger::Trace("Executing command: {}", command);
+    
+    bool result = DbgCmdExec(command.c_str());
+    
+    if (!result) {
+        Logger::Error("Command failed: {}", command);
+    }
+    
+    return result;
+}
+
+bool DebugController::WaitForPause(uint32_t timeoutMs) {
+    auto start = std::chrono::steady_clock::now();
+    
+    while (true) {
+        if (IsPaused()) {
+            return true;
+        }
+        
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+        
+        if (elapsed >= timeoutMs) {
+            Logger::Warning("Wait for pause timed out after {} ms", timeoutMs);
+            return false;
+        }
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+} // namespace MCP

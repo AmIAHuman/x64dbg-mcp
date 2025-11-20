@@ -1,0 +1,67 @@
+# Build directories
+build/
+bin/
+lib/
+out/
+cmake-build-*/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.sln
+*.vcxproj
+*.vcxproj.filters
+
+# Compiled files
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.dp64
+*.dp32
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# x64dbg specific
+pluginconfig.json
+
+# Internal documentation (not for public release)
+PROGRESS.md
+IMPLEMENTATION_STATUS.md
+Plan.md
+COMPILE_FIX_GUIDE.md
+BUILD_SUCCESS.md
+DOCS_UPDATE_SUMMARY.md
+PRE_RELEASE_CHECKLIST.md
+FILE_LIST.txt
+STATISTICS.md
+SUMMARY.md
+GITHUB_UPLOAD_READY.md
+CMakePresets.json
+
+# Internal technical documentation (detailed implementation docs)
+docs/Protocol.md
+docs/Architecture.md
+docs/Extension_Guide.md
+docs/SDK_Integration.md
+docs/Threading_Model.md
