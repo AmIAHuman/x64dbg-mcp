@@ -15,6 +15,7 @@
 #include <functional>
 #include <vector>
 #include <winsock2.h>
+#include <nlohmann/json_fwd.hpp>
 
 namespace MCP {
 
@@ -27,13 +28,6 @@ namespace MCP {
  */
 class MCPHttpServer {
 public:
-    struct Tool {
-        std::string name;
-        std::string description;
-        std::string x64dbg_method;
-        std::string params_template;
-    };
-
     MCPHttpServer();
     ~MCPHttpServer();
 
@@ -50,9 +44,6 @@ public:
     std::string GetAddress() const { return m_host + ":" + std::to_string(m_port); }
 
 private:
-    // 初始化工具列表
-    void InitializeTools();
-    
     // 服务器主循环
     void ServerLoop();
     
@@ -74,11 +65,8 @@ private:
     // 解析 JSON-RPC 请求
     bool ParseJsonRpcRequest(const std::string& json, std::string& method, std::string& requestId);
     
-    // 调用 x64dbg 工具
-    std::string CallX64dbgTool(const std::string& toolName, const std::string& arguments);
-    
-    // JSON 字符串转义
-    std::string QuoteJson(const std::string& str);
+    // 调用 MCP 工具
+    std::string CallMCPTool(const std::string& toolName, const nlohmann::json& arguments);
     
     // 解析 HTTP 请求
     bool ParseHttpRequest(const std::string& request, std::string& method, 
@@ -96,7 +84,6 @@ private:
     SOCKET m_listenSocket;
     std::atomic<bool> m_running;
     std::thread m_serverThread;
-    std::vector<Tool> m_tools;
     int m_requestId;
 };
 

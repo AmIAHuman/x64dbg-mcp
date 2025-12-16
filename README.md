@@ -2,22 +2,74 @@
 
 English | [中文](docs/README_CN.md)
 
-A Model Context Protocol (MCP) server implementation for x64dbg, enabling remote debugging through a JSON-RPC 2.0 interface. This plugin allows external applications and AI agents to interact with the x64dbg debugger programmatically.
+A Model Context Protocol (MCP) server implementation for x64dbg and x32dbg, enabling remote debugging through a JSON-RPC 2.0 interface. This plugin allows external applications and AI agents to interact with the debugger programmatically.
+
+**Now supports both x64 and x86 architectures!**
 
 ## Features
 
+- **Full MCP Specification Compliance**: Implements all three core MCP building blocks
+  - **Tools (69)**: AI-invokable debugging functions
+  - **Resources (15)**: Application-controlled context data sources
+  - **Prompts (10)**: User-guided debugging workflow templates
+  
 - **JSON-RPC 2.0 Protocol**: Standard, language-agnostic interface
 - **HTTP + SSE Communication**: Modern web-based integration via Server-Sent Events
-- **MCP Protocol Support**: Compatible with Model Context Protocol for AI agent integration
-- **Comprehensive Debugging API**: 
-  - Execution control (run, pause, step)
-  - Memory read/write/search
-  - Register access (50+ registers)
-  - Breakpoint management (software, hardware, memory)
+
+- **Tools - AI-Controlled Debugging (69 functions)**: 
+  - Execution control (run, pause, step, run_to)
+  - Memory read/write/search/allocate
+  - Register access (50+ registers including GPR, SSE, AVX)
+  - Breakpoint management (software, hardware, memory, conditional, logging)
   - Disassembly and symbol resolution
-  - Event notifications via SSE
+  - Thread management (list, switch, suspend, resume)
+  - Stack trace and analysis
+  - **Dump & Unpacking** (module dump, memory dump, auto-unpacking, OEP detection, IAT reconstruction)
+  - **Script execution** (execute x64dbg commands, batch operations)
+  - **Context snapshots** (capture and compare debugging state)
+  
+- **Resources - Context Providers (15 sources)**:
+  - Direct resources: debugger state, registers, modules, threads, memory map, breakpoints, stack
+  - Resource templates: memory content, disassembly, module info, symbol resolution, function analysis
+  - Read-only, application-controlled access
+  
+- **Prompts - Workflow Templates (10 prompts)**:
+  - Crash analysis, vulnerability hunting, function tracing
+  - Binary unpacking, algorithm reversing, execution comparison
+  - String hunting, code patching, API monitoring
+  - Debug session initialization
+
 - **Security**: Permission-based access control
-- **Extensible**: Plugin architecture for custom methods
+- **Extensible**: Plugin architecture for custom methods, resources, and prompts
+
+## What's New in v1.0.2
+
+- 🐛 **Bug Fixes**: Fixed critical issues from automated testing
+  - Fixed `breakpoint_toggle` state consistency
+  - Implemented actual `memory_search` functionality
+  - Fixed `memory_get_info` to return correct region base address
+  - Fixed `debug_step_over` RIP synchronization timing
+  - Enhanced `dump_detect_oep` strategy validation with clear error messages
+  - Added missing diagnostic fields (`error`, `encoding`, `progress`)
+
+- 🔧 **Build System Improvements**
+  - Dual architecture build script: compile both x64 and x86 in one command
+  - Unified output directory (`dist/`) for both architectures
+  - Faster parallel compilation with `-j` flag
+  - Simplified build options: `--clean`, `--x64-only`, `--x86-only`
+
+- 📚 **Documentation Cleanup**
+  - Removed redundant technical documentation
+  - Streamlined core documentation
+
+## Previous Releases
+
+### v1.0.1
+
+- Thread and stack management APIs
+- Enhanced error handling and logging
+
+For complete version history, see [CHANGELOG.md](CHANGELOG.md)
 
 ## Building from Source
 
@@ -38,24 +90,38 @@ The easiest way to build is using the provided build script:
 git clone https://github.com/SetsunaYukiOvO/x64dbg-mcp.git
 cd x64dbg-mcp
 
-# Run the build script
+# Build both x64 and x86 architectures (recommended)
 .\build.bat
 
+# Build only x64 architecture
+.\build.bat --x64-only
+
+# Build only x86 architecture
+.\build.bat --x86-only
+
+# Clean rebuild
+.\build.bat --clean
+
 # The script will:
-# 1. Automatically detect or install vcpkg
+# 1. Automatically detect vcpkg installation
 # 2. Download dependencies (nlohmann_json)
-# 3. Configure CMake with proper settings
-# 4. Build using Visual Studio
-# 5. Optionally install to x64dbg plugins directory
+# 3. Configure CMake for both architectures
+# 4. Build using Visual Studio with parallel compilation
+# 5. Copy output files to dist/ directory
 ```
 
 Build script options:
 ```powershell
-.\build.bat           # Release build (default)
-.\build.bat --debug   # Debug build with symbols
-.\build.bat --clean   # Clean rebuild
-.\build.bat --help    # Show all options
+.\build.bat               # Build both x64 and x86 (Release)
+.\build.bat --clean       # Clean rebuild both architectures
+.\build.bat --x64-only    # Build x64 only
+.\build.bat --x86-only    # Build x86 only
+.\build.bat --debug       # Debug build (future support)
 ```
+
+**Output files** (in `dist/` directory):
+- x64 plugin: `dist\x64dbg_mcp.dp64` (~837 KB)
+- x86 plugin: `dist\x32dbg_mcp.dp32` (~800 KB)
 
 ### Manual Build Steps
 
@@ -76,8 +142,15 @@ cd x64dbg-mcp
 
 3. **Configure with CMake**:
 ```powershell
+# For x64 build
 cmake -B build -G "Visual Studio 17 2022" -A x64 ^
-    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake ^
+    -DXDBG_ARCH=x64
+
+# For x86 build
+cmake -B build -G "Visual Studio 17 2022" -A Win32 ^
+    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake ^
+    -DXDBG_ARCH=x86
 ```
 
 4. **Build**:
@@ -86,22 +159,37 @@ cmake --build build --config Release
 ```
 
 5. **Output**:
-- Plugin file: `build\bin\Release\x64dbg_mcp.dp64` (approximately 445 KB)
+- Plugin file: `build\bin\Release\x64dbg_mcp.dp64` (approximately 611 KB)
 
 ## Installation
 
-1. Copy the compiled plugin to x64dbg's plugin directory:
-```bash
-cp build/bin/Release/x64dbg_mcp.dp64 /path/to/x64dbg/plugins/
+1. Copy the compiled plugins to their respective debugger directories:
+
+```powershell
+# For x64dbg (64-bit)
+# Replace <x64dbg-path> with your actual x64dbg installation directory
+copy dist\x64dbg_mcp.dp64 <x64dbg-path>\x64\plugins\
+
+# For x32dbg (32-bit)
+copy dist\x32dbg_mcp.dp32 <x64dbg-path>\x32\plugins\
+
+# Example (if installed at C:\x64dbg):
+# copy dist\x64dbg_mcp.dp64 C:\x64dbg\x64\plugins\
+# copy dist\x32dbg_mcp.dp32 C:\x64dbg\x32\plugins\
 ```
 
-2. Copy the configuration file:
-```bash
-mkdir -p /path/to/x64dbg/plugins/x64dbg-mcp
-cp config.json /path/to/x64dbg/plugins/x64dbg-mcp/
+2. (Optional) Copy the configuration file:
+```powershell
+# For x64dbg
+mkdir <x64dbg-path>\x64\plugins\x64dbg-mcp
+copy config.json <x64dbg-path>\x64\plugins\x64dbg-mcp\
+
+# For x32dbg
+mkdir <x64dbg-path>\x32\plugins\x32dbg-mcp
+copy config.json <x64dbg-path>\x32\plugins\x32dbg-mcp\
 ```
 
-3. Restart x64dbg to load the plugin
+3. Restart x64dbg/x32dbg to load the plugin
 
 ## Usage
 

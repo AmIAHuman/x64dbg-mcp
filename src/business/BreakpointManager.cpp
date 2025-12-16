@@ -242,19 +242,50 @@ std::optional<BreakpointInfo> BreakpointManager::GetBreakpoint(uint64_t address)
     info.module = GetModuleName(address);
     
     // 确定断点类型
+    BPXTYPE type = bp_none;
     if (bpType & bp_normal) {
         info.type = BreakpointType::Software;
+        type = bp_normal;
     } else if (bpType & bp_hardware) {
         info.type = BreakpointType::Hardware;
         info.condition = HardwareBreakpointCondition::Execute;
         info.size = HardwareBreakpointSize::Byte1;
+        type = bp_hardware;
     } else if (bpType & bp_memory) {
         info.type = BreakpointType::Memory;
+        type = bp_memory;
     }
     
-    // TODO: 从 x64dbg 获取更多断点详细信息
-    info.enabled = true;
-    info.isLogBreakpoint = false;
+    // 从 x64dbg 获取断点启用状态
+    BP_REF bpRef;
+    memset(&bpRef, 0, sizeof(bpRef));
+    
+    if (DbgFunctions()->BpRefVa(&bpRef, type, address)) {
+        duint enabled = 0;
+        if (DbgFunctions()->BpGetFieldNumber(&bpRef, bpf_enabled, &enabled)) {
+            info.enabled = (enabled != 0);
+        } else {
+            info.enabled = true; // 默认为启用
+        }
+        
+        // 获取日志断点信息
+        std::string logText;
+        if (DbgFunctions()->BpGetFieldText(&bpRef, bpf_logtext, 
+            [](const char* str, void* userdata) {
+                if (str) {
+                    *(std::string*)userdata = str;
+                }
+            }, &logText)) {
+            info.isLogBreakpoint = !logText.empty();
+            info.logMessage = logText;
+        } else {
+            info.isLogBreakpoint = false;
+        }
+    } else {
+        // 如果无法获取引用，默认为启用
+        info.enabled = true;
+        info.isLogBreakpoint = false;
+    }
     
     return info;
 }

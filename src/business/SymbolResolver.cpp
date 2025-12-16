@@ -207,7 +207,7 @@ std::optional<uint64_t> SymbolResolver::GetFunctionStart(uint64_t address) {
         throw DebuggerNotRunningException();
     }
     
-#ifdef X64DBG_SDK_AVAILABLE
+#ifdef XDBG_SDK_AVAILABLE
     // 使用Script::Function::GetInfo来获取函数信息
     Script::Function::FunctionInfo info = {};
     duint start = 0;
@@ -231,7 +231,7 @@ std::optional<uint64_t> SymbolResolver::GetFunctionEnd(uint64_t address) {
         throw DebuggerNotRunningException();
     }
     
-#ifdef X64DBG_SDK_AVAILABLE
+#ifdef XDBG_SDK_AVAILABLE
     // 使用Script::Function::GetInfo来获取函数信息
     Script::Function::FunctionInfo info = {};
     duint end = 0;

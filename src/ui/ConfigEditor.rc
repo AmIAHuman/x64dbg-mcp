@@ -1,0 +1,62 @@
+#include <windows.h>
+#include "resource.h"
+
+IDD_CONFIG_EDITOR DIALOGEX 0, 0, 420, 480
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "MCP Server Configuration"
+FONT 9, "Segoe UI"
+BEGIN
+    // Server Settings Group
+    GROUPBOX        "Server Settings", IDC_STATIC, 10, 10, 400, 50
+    LTEXT           "Address:", IDC_STATIC, 20, 28, 50, 10
+    EDITTEXT        IDC_SERVER_ADDRESS, 70, 26, 120, 14, ES_AUTOHSCROLL
+    LTEXT           "Port:", IDC_STATIC, 210, 28, 30, 10
+    EDITTEXT        IDC_SERVER_PORT, 250, 26, 60, 14, ES_AUTOHSCROLL | ES_NUMBER
+    
+    // Permissions Group
+    GROUPBOX        "Permissions", IDC_STATIC, 10, 70, 400, 80
+    AUTOCHECKBOX    "Allow Memory Write", IDC_ALLOW_MEMORY_WRITE, 20, 88, 180, 10
+    AUTOCHECKBOX    "Allow Register Write", IDC_ALLOW_REGISTER_WRITE, 20, 103, 180, 10
+    AUTOCHECKBOX    "Allow Script Execution", IDC_ALLOW_SCRIPT_EXEC, 20, 118, 180, 10
+    AUTOCHECKBOX    "Allow Breakpoint Modification", IDC_ALLOW_BREAKPOINT_MOD, 20, 133, 180, 10
+    
+    // Allowed Methods Group
+    GROUPBOX        "Allowed Methods", IDC_STATIC, 10, 160, 400, 120
+    LISTBOX         IDC_METHODS_LIST, 20, 178, 260, 80, LBS_STANDARD | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Add method pattern:", IDC_STATIC, 20, 263, 100, 10
+    EDITTEXT        IDC_METHOD_INPUT, 120, 261, 160, 14, ES_AUTOHSCROLL
+    PUSHBUTTON      "Add", IDC_METHOD_ADD, 290, 260, 50, 16
+    PUSHBUTTON      "Remove", IDC_METHOD_REMOVE, 350, 260, 50, 16
+    
+    // Logging Group
+    GROUPBOX        "Logging", IDC_STATIC, 10, 290, 400, 80
+    AUTOCHECKBOX    "Enable Logging", IDC_LOG_ENABLED, 20, 308, 100, 10
+    LTEXT           "Level:", IDC_STATIC, 20, 325, 40, 10
+    COMBOBOX        IDC_LOG_LEVEL, 60, 323, 80, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "File:", IDC_STATIC, 160, 325, 30, 10
+    EDITTEXT        IDC_LOG_FILE, 190, 323, 120, 14, ES_AUTOHSCROLL
+    LTEXT           "Max Size (MB):", IDC_STATIC, 20, 345, 70, 10
+    EDITTEXT        IDC_LOG_MAX_SIZE, 90, 343, 50, 14, ES_AUTOHSCROLL | ES_NUMBER
+    AUTOCHECKBOX    "Console Output", IDC_LOG_CONSOLE, 160, 345, 100, 10
+    
+    // Timeouts Group
+    GROUPBOX        "Timeouts (milliseconds)", IDC_STATIC, 10, 380, 400, 50
+    LTEXT           "Request:", IDC_STATIC, 20, 398, 50, 10
+    EDITTEXT        IDC_TIMEOUT_REQUEST, 70, 396, 60, 14, ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "Step:", IDC_STATIC, 150, 398, 40, 10
+    EDITTEXT        IDC_TIMEOUT_STEP, 190, 396, 60, 14, ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "Memory:", IDC_STATIC, 270, 398, 50, 10
+    EDITTEXT        IDC_TIMEOUT_MEMORY, 320, 396, 60, 14, ES_AUTOHSCROLL | ES_NUMBER
+    
+    // Features Group
+    GROUPBOX        "Features", IDC_STATIC, 10, 440, 400, 40
+    AUTOCHECKBOX    "Notifications", IDC_FEATURE_NOTIFICATIONS, 20, 458, 80, 10
+    AUTOCHECKBOX    "Heartbeat", IDC_FEATURE_HEARTBEAT, 120, 458, 80, 10
+    LTEXT           "Interval (s):", IDC_STATIC, 210, 460, 50, 10
+    EDITTEXT        IDC_HEARTBEAT_INTERVAL, 260, 458, 40, 14, ES_AUTOHSCROLL | ES_NUMBER
+    AUTOCHECKBOX    "Batch Requests", IDC_FEATURE_BATCH, 320, 458, 80, 10
+    
+    // Buttons
+    DEFPUSHBUTTON   "Save", IDOK, 260, 490, 70, 18
+    PUSHBUTTON      "Cancel", IDCANCEL, 340, 490, 70, 18
+END

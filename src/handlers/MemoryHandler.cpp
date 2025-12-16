@@ -152,6 +152,7 @@ nlohmann::json MemoryHandler::GetInfo(const nlohmann::json& params) {
     
     // 构建响应
     nlohmann::json result;
+    result["queried_address"] = addressStr;
     result["base"] = StringUtils::FormatAddress(info->base);
     result["size"] = info->size;
     result["protection"] = info->protection;

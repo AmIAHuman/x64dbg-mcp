@@ -2,15 +2,15 @@
 
 /**
  * @file X64DBGBridge.h
- * @brief x64dbg SDK 适配层
- * 
- * 这个文件统一管理所有 x64dbg SDK 的引用,
+ * @brief xdbg SDK 适配层（支持 x64 / x86）
+ *
+ * 这个文件统一管理所有 xdbg SDK 的引用,
  * 提供一个中心化的位置来处理 SDK 的包含和类型定义。
  */
 
 // 检查 SDK 是否可用
-#ifdef X64DBG_SDK_AVAILABLE
-    // 使用实际的 x64dbg SDK
+#ifdef XDBG_SDK_AVAILABLE
+    // 使用实际的 x64dbg/x32dbg SDK（通过 CMake 定义）
     #include "_plugins.h"
     #include "_dbgfunctions.h"
     #include "bridgemain.h"
@@ -18,18 +18,22 @@
     #include "_scriptapi_memory.h"
     #include "_scriptapi_module.h"
     #include "_scriptapi_function.h"
-    
+
     // SDK 已定义所有需要的类型和函数
-    
+
 #else
     // 临时定义 - 用于编译时没有 SDK 的情况
-    #warning "x64dbg SDK not available, using temporary definitions"
-    
+    #warning "xdbg SDK not available, using temporary definitions"
+
     #include <cstdint>
     #include <windows.h>
-    
-    // 基本类型定义
+
+    // 基本类型定义：根据目标架构选择宽度
+#ifdef XDBG_ARCH_X64
     using duint = uint64_t;
+#else
+    using duint = uint32_t;
+#endif
     
     // 插件结构
     #define PLUG_EXPORT extern "C" __declspec(dllexport)
@@ -164,11 +168,17 @@
     
     // 寄存器结构
     struct REGDUMP {
+#ifdef XDBG_ARCH_X64
         uint64_t rax, rbx, rcx, rdx;
         uint64_t rsi, rdi, rbp, rsp;
         uint64_t r8, r9, r10, r11;
         uint64_t r12, r13, r14, r15;
         uint64_t rip;
+#else
+        uint32_t eax, ebx, ecx, edx;
+        uint32_t esi, edi, ebp, esp;
+        uint32_t eip;
+#endif
         uint64_t eflags;
         unsigned short cs, ds, es, fs, gs, ss;
     };
@@ -218,16 +228,16 @@
 namespace MCP {
 
 /**
- * @brief x64dbg SDK 辅助类
+ * @brief xdbg SDK 辅助类
  * 提供便捷的 SDK 功能访问
  */
-class X64DBGHelper {
+class XDBGHelper {
 public:
     /**
      * @brief 检查 SDK 是否可用
      */
     static bool IsSDKAvailable() {
-        #ifdef X64DBG_SDK_AVAILABLE
+        #ifdef XDBG_SDK_AVAILABLE
             return true;
         #else
             return false;
@@ -238,8 +248,12 @@ public:
      * @brief 获取 SDK 版本信息
      */
     static const char* GetSDKVersion() {
-        #ifdef X64DBG_SDK_AVAILABLE
-            return "x64dbg SDK (Real)";
+        #ifdef XDBG_SDK_AVAILABLE
+            #ifdef XDBG_ARCH_X64
+                return "x64dbg SDK (Real)";
+            #else
+                return "x32dbg SDK (Real)";
+            #endif
         #else
             return "Mock SDK (临时)";
         #endif

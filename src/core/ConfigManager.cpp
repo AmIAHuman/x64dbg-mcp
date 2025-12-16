@@ -27,8 +27,9 @@ json ConfigManager::CreateDefaultConfig() const {
     config["permissions"]["allow_breakpoint_modification"] = true;
     config["permissions"]["allowed_methods"] = json::array({
         "debug.*", "register.*", "memory.*", "breakpoint.*",
-        "disasm.*", "symbol.*", "thread.*", "stack.*",
-        "comment.*", "script.*"
+        "disasm.*", "disassembly.*", "module.*", "symbol.*",
+        "thread.*", "stack.*", "comment.*", "script.*",
+        "context.*", "dump.*"
     });
     
     // Logging
@@ -83,6 +84,9 @@ bool ConfigManager::CreateConfigFile(const std::string& filePath) {
 
 bool ConfigManager::Load(const std::string& filePath) {
     std::unique_lock lock(m_mutex);
+    
+    // 存储配置文件路径
+    m_configPath = filePath;
     
     // 检查文件是否存在
     if (!std::filesystem::exists(filePath)) {
@@ -223,6 +227,15 @@ uint32_t ConfigManager::GetRequestTimeout() const {
 
 uint32_t ConfigManager::GetStepTimeout() const {
     return static_cast<uint32_t>(Get<int>("timeout.step_timeout_ms", 10000));
+}
+
+std::string ConfigManager::GetConfigPath() const {
+    std::shared_lock lock(m_mutex);
+    return m_configPath;
+}
+
+json ConfigManager::GetDefaultConfig() const {
+    return CreateDefaultConfig();
 }
 
 } // namespace MCP

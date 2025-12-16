@@ -61,11 +61,20 @@ std::vector<StackFrame> StackManager::GetStackTraceManual(size_t maxDepth) {
     auto& regMgr = RegisterManager::Instance();
     auto& symResolver = SymbolResolver::Instance();
     
+    // 根据架构获取正确的寄存器
+#ifdef XDBG_ARCH_X64
     uint64_t rsp = regMgr.GetRegister("rsp");
     uint64_t rbp = regMgr.GetRegister("rbp");
     uint64_t rip = regMgr.GetRegister("rip");
+    const size_t ptrSize = 8;
+#else
+    uint64_t rsp = regMgr.GetRegister("esp");
+    uint64_t rbp = regMgr.GetRegister("ebp");
+    uint64_t rip = regMgr.GetRegister("eip");
+    const size_t ptrSize = 4;
+#endif
     
-    LOG_DEBUG("Stack trace starting from RIP={:016X}, RSP={:016X}, RBP={:016X}", rip, rsp, rbp);
+    LOG_DEBUG("Stack trace starting from IP={:016X}, SP={:016X}, BP={:016X}", rip, rsp, rbp);
     
     // 添加当前帧
     StackFrame currentFrame;
@@ -100,9 +109,9 @@ std::vector<StackFrame> StackManager::GetStackTraceManual(size_t maxDepth) {
             break;
         }
         
-        // 读取返回地址（在 x64 调用约定中，返回地址在 RBP+8）
-        if (!Script::Memory::Read(currentRBP + 8, &returnAddress, sizeof(returnAddress), nullptr)) {
-            LOG_DEBUG("Failed to read return address at {:016X}", currentRBP + 8);
+        // 读取返回地址（在调用约定中，返回地址在 BP + 指针大小）
+        if (!Script::Memory::Read(currentRBP + ptrSize, &returnAddress, sizeof(returnAddress), nullptr)) {
+            LOG_DEBUG("Failed to read return address at {:016X}", currentRBP + ptrSize);
             break;
         }
         
@@ -121,9 +130,9 @@ std::vector<StackFrame> StackManager::GetStackTraceManual(size_t maxDepth) {
         // 创建栈帧
         StackFrame frame;
         frame.address = returnAddress;
-        frame.from = currentRBP + 8;  // 返回地址所在位置
+        frame.from = currentRBP + ptrSize;  // 返回地址所在位置
         frame.to = returnAddress;
-        frame.rsp = currentRBP + 16;  // 估算调用前的 RSP
+        frame.rsp = currentRBP + (ptrSize * 2);  // 估算调用前的 SP (BP + 2*指针大小)
         frame.rbp = savedRBP;
         frame.comment = ResolveSymbol(returnAddress);
         frame.isUser = true;
@@ -156,13 +165,13 @@ std::vector<uint8_t> StackManager::ReadStackFrame(uint64_t frameAddress, size_t 
     
     std::vector<uint8_t> data(size);
     
-    size_t bytesRead = 0;
+    duint bytesRead = 0;
     if (!Script::Memory::Read(frameAddress, data.data(), size, &bytesRead)) {
         throw MCPException("Failed to read stack frame");
     }
     
     if (bytesRead < size) {
-        data.resize(bytesRead);
+        data.resize(static_cast<size_t>(bytesRead));
         LOG_WARNING("Only read {} of {} bytes from stack frame", bytesRead, size);
     }
     
@@ -174,7 +183,11 @@ uint64_t StackManager::GetStackPointer() {
         throw DebuggerNotRunningException("Debugger is not debugging");
     }
     
+#ifdef XDBG_ARCH_X64
     return RegisterManager::Instance().GetRegister("rsp");
+#else
+    return RegisterManager::Instance().GetRegister("esp");
+#endif
 }
 
 uint64_t StackManager::GetBasePointer() {
@@ -182,7 +195,11 @@ uint64_t StackManager::GetBasePointer() {
         throw DebuggerNotRunningException("Debugger is not debugging");
     }
     
+#ifdef XDBG_ARCH_X64
     return RegisterManager::Instance().GetRegister("rbp");
+#else
+    return RegisterManager::Instance().GetRegister("ebp");
+#endif
 }
 
 bool StackManager::IsAddressOnStack(uint64_t address) {

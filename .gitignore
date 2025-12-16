@@ -1,7 +1,10 @@
 # Build directories
+build_x64/
+build_x86/
 build/
 bin/
 lib/
+dist/
 out/
 cmake-build-*/
 

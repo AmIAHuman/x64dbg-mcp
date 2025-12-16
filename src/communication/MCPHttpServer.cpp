@@ -8,6 +8,9 @@
 #include "../core/Logger.h"
 #include "../core/MethodDispatcher.h"
 #include "../core/JSONRPCParser.h"
+#include "../core/MCPToolRegistry.h"
+#include "../core/MCPResourceRegistry.h"
+#include "../core/MCPPromptRegistry.h"
 #include <ws2tcpip.h>
 #include <sstream>
 #include <algorithm>
@@ -22,34 +25,10 @@ MCPHttpServer::MCPHttpServer()
     , m_running(false)
     , m_requestId(0)
 {
-    InitializeTools();
 }
 
 MCPHttpServer::~MCPHttpServer() {
     Stop();
-}
-
-void MCPHttpServer::InitializeTools() {
-    m_tools = {
-        {"debug_status", "获取调试器当前状态", "debug.get_state", "{}"},
-        {"get_registers", "获取所有寄存器值", "register.list", "{}"},
-        {"read_memory", "读取内存 (参数: address, size)", "memory.read", "{\\\"address\\\":%address%,\\\"size\\\":%size%}"},
-        {"write_memory", "写入内存 (参数: address, data)", "memory.write", "{\\\"address\\\":%address%,\\\"data\\\":%data%}"},
-        {"disassemble", "反汇编代码 (参数: address, count)", "disassembly.at", "{\\\"address\\\":%address%,\\\"count\\\":%count%}"},
-        {"step_into", "单步进入", "debug.step_into", "{}"},
-        {"step_over", "单步跳过", "debug.step_over", "{}"},
-        {"step_out", "单步跳出", "debug.step_out", "{}"},
-        {"continue", "继续执行", "debug.run", "{}"},
-        {"pause", "暂停执行", "debug.pause", "{}"},
-        {"get_modules", "获取模块列表", "module.list", "{}"},
-        {"get_threads", "获取线程列表", "thread.list", "{}"},
-        {"set_breakpoint", "设置断点 (参数: address, type)", "breakpoint.set", "{\\\"address\\\":%address%,\\\"type\\\":\\\"software\\\"}"},
-        {"remove_breakpoint", "删除断点 (参数: address)", "breakpoint.delete", "{\\\"address\\\":%address%}"},
-        {"get_breakpoints", "获取断点列表", "breakpoint.list", "{}"},
-        {"reset_hitcount", "重置断点命中计数 (参数: address)", "breakpoint.reset_hitcount", "{\\\"address\\\":%address%}"}
-    };
-    
-    Logger::Info("Initialized " + std::to_string(m_tools.size()) + " MCP tools");
 }
 
 bool MCPHttpServer::Start(const std::string& host, int port) {
@@ -353,75 +332,227 @@ std::string MCPHttpServer::HandleMCPMethod(const std::string& method, const std:
         return ""; // 不返回响应
     }
     else if (method == "tools/list") {
-        Logger::Info("Handling tools/list request, have " + std::to_string(m_tools.size()) + " tools");
+        auto& registry = MCPToolRegistry::Instance();
+        json result = registry.GenerateToolsListResponse();
         
-        std::ostringstream oss;
-        oss << "{\"jsonrpc\":\"2.0\",\"id\":" << requestId << ",\"result\":{\"tools\":[";
+        Logger::Info("Handling tools/list request, have {} tools", result["tools"].size());
         
-        for (size_t i = 0; i < m_tools.size(); ++i) {
-            if (i > 0) oss << ",";
-            oss << "{\"name\":\"" << m_tools[i].name << "\","
-                << "\"description\":\"" << m_tools[i].description << "\","
-                << "\"inputSchema\":{\"type\":\"object\"}}";
-        }
+        json response = {
+            {"jsonrpc", "2.0"},
+            {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+            {"result", result}
+        };
         
-        oss << "]}}";
-        std::string result = oss.str();
-        Logger::Debug("tools/list response: " + result);
-        return result;
+        return response.dump();
     }
     else if (method == "tools/call") {
         Logger::Info("Handling tools/call request");
         
-        // 解析 tool name 和 arguments
-        std::string toolName;
-        std::string arguments;
-        
-        // 从 POST body 中提取 params
-        size_t paramsPos = body.find("\"params\":");
-        if (paramsPos != std::string::npos) {
-            // 提取 name
-            size_t namePos = body.find("\"name\":", paramsPos);
-            if (namePos != std::string::npos) {
-                size_t nameStart = body.find("\"", namePos + 7) + 1;
-                size_t nameEnd = body.find("\"", nameStart);
-                if (nameEnd != std::string::npos) {
-                    toolName = body.substr(nameStart, nameEnd - nameStart);
-                }
+        try {
+            // 解析请求 body
+            json requestJson = json::parse(body);
+            
+            if (!requestJson.contains("params")) {
+                return json({
+                    {"jsonrpc", "2.0"},
+                    {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+                    {"error", {
+                        {"code", -32602},
+                        {"message", "Invalid params: missing params object"}
+                    }}
+                }).dump();
             }
             
-            // 提取 arguments（如果有）
-            size_t argsPos = body.find("\"arguments\":", paramsPos);
-            if (argsPos != std::string::npos) {
-                size_t argsStart = body.find("{", argsPos);
-                if (argsStart != std::string::npos) {
-                    int braceCount = 1;
-                    size_t i = argsStart + 1;
-                    while (i < body.length() && braceCount > 0) {
-                        if (body[i] == '{') braceCount++;
-                        else if (body[i] == '}') braceCount--;
-                        i++;
-                    }
-                    if (braceCount == 0) {
-                        arguments = body.substr(argsStart, i - argsStart);
-                    }
-                }
+            json params = requestJson["params"];
+            
+            if (!params.contains("name") || !params["name"].is_string()) {
+                return json({
+                    {"jsonrpc", "2.0"},
+                    {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+                    {"error", {
+                        {"code", -32602},
+                        {"message", "Invalid params: missing or invalid tool name"}
+                    }}
+                }).dump();
             }
+            
+            std::string toolName = params["name"].get<std::string>();
+            json arguments = params.value("arguments", json::object());
+            
+            Logger::Info("Calling tool: {} with args: {}", toolName, arguments.dump());
+            
+            // 调用工具
+            std::string result = CallMCPTool(toolName, arguments);
+            
+            return json({
+                {"jsonrpc", "2.0"},
+                {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+                {"result", {
+                    {"content", json::array({
+                        {
+                            {"type", "text"},
+                            {"text", result}
+                        }
+                    })}
+                }}
+            }).dump();
+            
+        } catch (const json::exception& e) {
+            Logger::Error("JSON parse error in tools/call: {}", e.what());
+            return json({
+                {"jsonrpc", "2.0"},
+                {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+                {"error", {
+                    {"code", -32700},
+                    {"message", std::string("Parse error: ") + e.what()}
+                }}
+            }).dump();
+        } catch (const std::exception& e) {
+            Logger::Error("Exception in tools/call: {}", e.what());
+            return json({
+                {"jsonrpc", "2.0"},
+                {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+                {"error", {
+                    {"code", -32603},
+                    {"message", std::string("Internal error: ") + e.what()}
+                }}
+            }).dump();
         }
+    }
+    // Resources API
+    else if (method == "resources/list") {
+        auto& registry = MCPResourceRegistry::Instance();
+        json result = registry.GenerateResourcesListResponse();
         
-        if (toolName.empty()) {
-            Logger::Error("tools/call: missing tool name");
-            return "{\"jsonrpc\":\"2.0\",\"id\":" + requestId + 
-                   ",\"error\":{\"code\":-32602,\"message\":\"Invalid params: missing tool name\"}}";
+        Logger::Info("Handling resources/list request, have {} resources", result["resources"].size());
+        
+        json response = {
+            {"jsonrpc", "2.0"},
+            {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+            {"result", result}
+        };
+        
+        return response.dump();
+    }
+    else if (method == "resources/templates/list") {
+        auto& registry = MCPResourceRegistry::Instance();
+        json result = registry.GenerateTemplatesListResponse();
+        
+        Logger::Info("Handling resources/templates/list request, have {} templates", 
+                     result["resourceTemplates"].size());
+        
+        json response = {
+            {"jsonrpc", "2.0"},
+            {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+            {"result", result}
+        };
+        
+        return response.dump();
+    }
+    else if (method == "resources/read") {
+        Logger::Info("Handling resources/read request");
+        
+        try {
+            json requestJson = json::parse(body);
+            
+            if (!requestJson.contains("params") || !requestJson["params"].contains("uri")) {
+                return json({
+                    {"jsonrpc", "2.0"},
+                    {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+                    {"error", {
+                        {"code", -32602},
+                        {"message", "Invalid params: missing uri"}
+                    }}
+                }).dump();
+            }
+            
+            std::string uri = requestJson["params"]["uri"].get<std::string>();
+            Logger::Info("Reading resource: {}", uri);
+            
+            auto& registry = MCPResourceRegistry::Instance();
+            MCPResourceContent content = registry.ReadResource(uri);
+            
+            json response = {
+                {"jsonrpc", "2.0"},
+                {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+                {"result", {
+                    {"contents", json::array({content.ToMCPFormat()})}
+                }}
+            };
+            
+            return response.dump();
+            
+        } catch (const std::exception& e) {
+            Logger::Error("Exception in resources/read: {}", e.what());
+            return json({
+                {"jsonrpc", "2.0"},
+                {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+                {"error", {
+                    {"code", -32603},
+                    {"message", std::string("Internal error: ") + e.what()}
+                }}
+            }).dump();
         }
+    }
+    // Prompts API
+    else if (method == "prompts/list") {
+        auto& registry = MCPPromptRegistry::Instance();
+        json result = registry.GeneratePromptsListResponse();
         
-        Logger::Info("Calling tool: " + toolName + " with args: " + arguments);
+        Logger::Info("Handling prompts/list request, have {} prompts", result["prompts"].size());
         
-        // 查找工具并调用
-        std::string result = CallX64dbgTool(toolName, arguments);
+        json response = {
+            {"jsonrpc", "2.0"},
+            {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+            {"result", result}
+        };
         
-        return "{\"jsonrpc\":\"2.0\",\"id\":" + requestId + 
-               ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":" + QuoteJson(result) + "}]}}";
+        return response.dump();
+    }
+    else if (method == "prompts/get") {
+        Logger::Info("Handling prompts/get request");
+        
+        try {
+            json requestJson = json::parse(body);
+            
+            if (!requestJson.contains("params") || !requestJson["params"].contains("name")) {
+                return json({
+                    {"jsonrpc", "2.0"},
+                    {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+                    {"error", {
+                        {"code", -32602},
+                        {"message", "Invalid params: missing name"}
+                    }}
+                }).dump();
+            }
+            
+            std::string promptName = requestJson["params"]["name"].get<std::string>();
+            json arguments = requestJson["params"].value("arguments", json::object());
+            
+            Logger::Info("Getting prompt: {} with args: {}", promptName, arguments.dump());
+            
+            auto& registry = MCPPromptRegistry::Instance();
+            MCPPromptResult promptResult = registry.GetPrompt(promptName, arguments);
+            
+            json response = {
+                {"jsonrpc", "2.0"},
+                {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+                {"result", promptResult.ToMCPFormat()}
+            };
+            
+            return response.dump();
+            
+        } catch (const std::exception& e) {
+            Logger::Error("Exception in prompts/get: {}", e.what());
+            return json({
+                {"jsonrpc", "2.0"},
+                {"id", requestId == "null" ? nullptr : json::parse(requestId)},
+                {"error", {
+                    {"code", -32603},
+                    {"message", std::string("Internal error: ") + e.what()}
+                }}
+            }).dump();
+        }
     }
     else {
         return "{\"jsonrpc\":\"2.0\",\"id\":" + requestId + 
@@ -482,73 +613,54 @@ void MCPHttpServer::SendSSEEvent(SOCKET socket, const std::string& event, const 
     send(socket, sseStr.c_str(), sseStr.length(), 0);
 }
 
-std::string MCPHttpServer::CallX64dbgTool(const std::string& toolName, const std::string& arguments) {
-    // 查找工具
-    const Tool* tool = nullptr;
-    for (const auto& t : m_tools) {
-        if (t.name == toolName) {
-            tool = &t;
-            break;
-        }
-    }
+std::string MCPHttpServer::CallMCPTool(const std::string& toolName, const nlohmann::json& arguments) {
+    auto& registry = MCPToolRegistry::Instance();
     
-    if (!tool) {
-        Logger::Error("Tool not found: " + toolName);
+    // 查找工具定义
+    auto toolOpt = registry.FindTool(toolName);
+    if (!toolOpt.has_value()) {
+        Logger::Error("Tool not found: {}", toolName);
         return "Error: Tool '" + toolName + "' not found";
     }
     
-    Logger::Info("Executing tool: " + toolName + " -> method: " + tool->x64dbg_method);
+    const MCPToolDefinition& tool = toolOpt.value();
+    
+    // 验证参数
+    std::string validationError = tool.ValidateArguments(arguments);
+    if (!validationError.empty()) {
+        Logger::Error("Tool argument validation failed: {}", validationError);
+        return "Error: " + validationError;
+    }
+    
+    Logger::Info("Executing tool: {} -> method: {}", toolName, tool.jsonrpcMethod);
     
     // 构建 JSON-RPC 请求发送给 MethodDispatcher
     try {
-        // 使用插件现有的 MethodDispatcher
-        auto& dispatcher = MCP::MethodDispatcher::Instance();
+        auto& dispatcher = MethodDispatcher::Instance();
         
         // 构建请求
-        MCP::JSONRPCRequest request;
+        JSONRPCRequest request;
         request.jsonrpc = "2.0";
-        request.method = tool->x64dbg_method;
+        request.method = tool.jsonrpcMethod;
         request.id = ++m_requestId;
-        
-        // 如果有参数，解析并设置
-        if (!arguments.empty() && arguments != "{}") {
-            request.params = nlohmann::json::parse(arguments);
-        } else {
-            request.params = nlohmann::json::object();
-        }
+        request.params = tool.TransformToJSONRPC(arguments);
         
         // 调用分发器
-        MCP::JSONRPCResponse response = dispatcher.Dispatch(request);
+        JSONRPCResponse response = dispatcher.Dispatch(request);
         
         if (response.error.has_value()) {
-            Logger::Error("Tool execution failed: " + response.error->message);
+            Logger::Error("Tool execution failed: {}", response.error->message);
             return "Error: " + response.error->message;
         }
         
-        // 返回结果
-        return response.result.dump();
+        // 返回格式化的结果
+        return response.result.dump(2);  // 美化输出
         
     } catch (const std::exception& e) {
-        Logger::Error("Exception calling tool: " + std::string(e.what()));
+        Logger::Error("Exception calling tool: {}", e.what());
         return "Error: " + std::string(e.what());
     }
 }
 
-// 辅助函数：JSON 字符串转义和引用
-std::string MCPHttpServer::QuoteJson(const std::string& str) {
-    std::string result = "\"";
-    for (char c : str) {
-        switch (c) {
-            case '"': result += "\\\""; break;
-            case '\\': result += "\\\\"; break;
-            case '\n': result += "\\n"; break;
-            case '\r': result += "\\r"; break;
-            case '\t': result += "\\t"; break;
-            default: result += c;
-        }
-    }
-    result += "\"";
-    return result;
-}
 
 } // namespace MCP

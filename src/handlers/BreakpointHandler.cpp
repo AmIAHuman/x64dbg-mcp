@@ -342,13 +342,13 @@ nlohmann::json BreakpointHandler::SetLog(const nlohmann::json& params) {
     if (!params.contains("address")) {
         throw InvalidParamsException("Missing required parameter: address");
     }
-    if (!params.contains("message")) {
-        throw InvalidParamsException("Missing required parameter: message");
+    if (!params.contains("log_text")) {
+        throw InvalidParamsException("Missing required parameter: log_text");
     }
     
     std::string addressStr = params["address"].get<std::string>();
     uint64_t address = StringUtils::ParseAddress(addressStr);
-    std::string message = params["message"].get<std::string>();
+    std::string message = params["log_text"].get<std::string>();
     
     auto& manager = BreakpointManager::Instance();
     bool success = manager.SetLogBreakpoint(address, message);

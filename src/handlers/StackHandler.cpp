@@ -77,6 +77,7 @@ nlohmann::json StackHandler::ReadStackFrame(const nlohmann::json& params) {
     result["address"] = StringUtils::FormatAddress(address);
     result["size"] = data.size();
     result["data"] = StringUtils::ToBase64(data);
+    result["encoding"] = "base64";
     
     return result;
 }

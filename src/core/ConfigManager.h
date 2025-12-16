@@ -62,6 +62,18 @@ public:
     
     uint32_t GetRequestTimeout() const;
     uint32_t GetStepTimeout() const;
+    
+    /**
+     * @brief 获取配置文件路径
+     * @return 配置文件路径
+     */
+    std::string GetConfigPath() const;
+    
+    /**
+     * @brief 获取默认配置
+     * @return 默认配置的 JSON 对象
+     */
+    json GetDefaultConfig() const;
 
 private:
     ConfigManager() = default;
@@ -76,6 +88,7 @@ private:
     
     json m_config;
     mutable std::shared_mutex m_mutex;
+    std::string m_configPath;  // 存储配置文件路径
 };
 
 // 模板函数实现

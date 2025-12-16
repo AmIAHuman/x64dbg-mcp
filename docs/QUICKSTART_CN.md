@@ -6,8 +6,8 @@
 
 ## 前置要求
 
-- Windows 10/11 (x64)
-- 已安装 x64dbg 调试器
+- Windows 10/11 (x64 或 x86)
+- 已安装 x64dbg 或 x32dbg 调试器
 - Visual Studio 2022 with C++ Desktop Development 工作负载
 - CMake 3.15+
 - vcpkg 包管理器
@@ -17,9 +17,14 @@
 ### 方式一：使用预编译版本（推荐）
 
 1. 从 [GitHub Releases](https://github.com/SetsunaYukiOvO/x64dbg-mcp/releases) 下载最新版本
-2. 解压 `x64dbg_mcp.dp64` 到 x64dbg 插件目录
-3. 复制 `config.json` 到 `plugins/x64dbg-mcp/`
-4. 重启 x64dbg
+2. 选择适合的版本：
+   - `x64dbg_mcp.dp64` 用于 x64dbg（64位）
+   - `x32dbg_mcp.dp32` 用于 x32dbg（32位）
+3. 解压到调试器的插件目录：
+   - x64dbg: `x64dbg\x64\plugins\`
+   - x32dbg: `x64dbg\x32\plugins\`
+4. 复制 `config.json` 到 `plugins/x64dbg-mcp/`（或 `plugins/x32dbg-mcp/`）
+5. 重启调试器
 
 ### 方式二：从源码构建
 
@@ -43,11 +48,15 @@ setx VCPKG_ROOT "C:\vcpkg"
 git clone https://github.com/SetsunaYukiOvO/x64dbg-mcp.git
 cd x64dbg-mcp
 
-# 使用构建脚本（推荐）
+# 构建 x64 版本（默认）
 .\build.bat
+
+# 构建 x86 版本（32位）
+.\build.bat --arch x86
 
 # 或使用特定选项构建
 .\build.bat --clean          # 清理构建
+.\build.bat --arch x86 --clean  # 清理 x86 构建
 .\build.bat --debug          # 调试构建
 .\build.bat --help           # 显示所有选项
 ```
@@ -55,20 +64,32 @@ cd x64dbg-mcp
 构建脚本将：
 - 自动检测 vcpkg 安装
 - 下载并编译依赖项（nlohmann_json）
-- 使用 Visual Studio 构建插件
-- 可选择自动安装到 x64dbg 插件目录
+- 使用 Visual Studio 为所选架构构建插件
+- 可选择自动安装到调试器插件目录
+
+**输出文件：**
+- x64: `build\bin\Release\x64dbg_mcp.dp64`
+- x86: `build\bin\Release\x32dbg_mcp.dp32`
 
 #### 3. 手动构建（高级）
 
 ```powershell
-# 使用 vcpkg 工具链配置
+# x64 配置
 cmake -B build -G "Visual Studio 17 2022" -A x64 ^
-    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake ^
+    -DXDBG_ARCH=x64
+
+# 或 x86 配置
+cmake -B build -G "Visual Studio 17 2022" -A Win32 ^
+    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake ^
+    -DXDBG_ARCH=x86
 
 # 编译
 cmake --build build --config Release
 
-# 输出：build\bin\Release\x64dbg_mcp.dp64
+# 输出：
+# - x64: build\bin\Release\x64dbg_mcp.dp64
+# - x86: build\bin\Release\x32dbg_mcp.dp32
 ```
 
 ## 1. 安装插件
@@ -76,17 +97,24 @@ cmake --build build --config Release
 如果你没有使用构建脚本的自动安装：
 
 ```powershell
-# 复制插件
+# x64dbg
 copy build\bin\Release\x64dbg_mcp.dp64 C:\x64dbg\x64\plugins\
 
-# 复制配置文件
+# x32dbg
+copy build\bin\Release\x32dbg_mcp.dp32 C:\x64dbg\x32\plugins\
+
+# 复制配置文件（根据架构调整路径）
 mkdir C:\x64dbg\x64\plugins\x64dbg-mcp
 copy config.json C:\x64dbg\x64\plugins\x64dbg-mcp\
+
+# 或 x32
+mkdir C:\x64dbg\x32\plugins\x32dbg-mcp
+copy config.json C:\x64dbg\x32\plugins\x32dbg-mcp\
 ```
 
 ## 2. 启动服务器
 
-1. 启动 x64dbg
+1. 启动 x64dbg 或 x32dbg
 2. 加载目标程序进行调试
 3. 菜单：**插件 → MCP Server → Start MCP HTTP Server**
 4. 服务器在端口 3000 上启动（可在 config.json 中配置）
@@ -294,6 +322,125 @@ build.bat [选项]
 .\build.bat --debug
 
 # 调试输出：build\bin\Debug\x64dbg_mcp.dp64
+```
+
+## 高级功能（v1.1.0+）
+
+### 脚本执行
+
+以编程方式执行 x64dbg 命令：
+
+```python
+# 执行单个命令
+response = client.send_request("script.execute", {
+    "command": "bp MessageBoxA"
+})
+
+# 批量执行命令
+response = client.send_request("script.execute_batch", {
+    "commands": [
+        "log \"开始分析...\"",
+        "bp kernel32.CreateFileW",
+        "bp kernel32.WriteFile",
+        "run"
+    ],
+    "stop_on_error": True  # 如果任何命令失败则停止
+})
+
+# 获取最后一次命令执行结果
+response = client.send_request("script.get_last_result")
+```
+
+### 上下文快照
+
+捕获和比较调试状态：
+
+```python
+# 捕获初始状态
+snapshot1 = client.send_request("context.get_snapshot", {
+    "include_stack": True,
+    "include_threads": True,
+    "include_modules": True,
+    "include_breakpoints": True
+})
+
+# 执行一些步骤
+client.send_request("debug.step_over")
+
+# 捕获新状态
+snapshot2 = client.send_request("context.get_snapshot", {
+    "include_stack": True,
+    "include_threads": False,  # 跳过线程以加快捕获速度
+    "include_modules": False,
+    "include_breakpoints": False
+})
+
+# 比较快照查看变化
+diff = client.send_request("context.compare_snapshots", {
+    "snapshot1": snapshot1["result"],
+    "snapshot2": snapshot2["result"]
+})
+
+print("检测到变化:", diff["result"]["has_differences"])
+print("寄存器变化:", diff["result"]["differences"].get("registers", []))
+```
+
+### 快速上下文检查
+
+```python
+# 获取基础上下文（仅寄存器 + 状态）
+context = client.send_request("context.get_basic")
+print("寄存器:", context["result"]["registers"])
+print("正在调试:", context["result"]["state"]["is_debugging"])
+```
+
+### 自动化分析工作流
+
+```python
+# 1. 设置环境
+client.send_request("script.execute_batch", {
+    "commands": [
+        "bp VirtualAlloc",
+        "bp VirtualProtect",
+        "run"
+    ]
+})
+
+# 2. 在断点处捕获状态
+bp_snapshot = client.send_request("context.get_snapshot", {
+    "include_stack": True
+})
+
+# 3. 使用脚本分析
+client.send_request("script.execute_batch", {
+    "commands": [
+        "log \"VirtualAlloc 被调用！\"",
+        "? rcx",
+        "? rdx"
+    ]
+})
+
+# 4. 继续并比较
+client.send_request("debug.run")
+after = client.send_request("context.get_snapshot")
+diff = client.send_request("context.compare_snapshots", {
+    "snapshot1": bp_snapshot["result"],
+    "snapshot2": after["result"]
+})
+```
+
+### 示例脚本
+
+查看 `examples/` 目录：
+
+- `python_client_http.py` - 基础 HTTP 客户端
+- `advanced_features_demo.py` - v1.1.0+ 功能演示
+
+运行演示：
+
+```powershell
+cd examples
+python advanced_features_demo.py
 ```
 
 ## 下一步

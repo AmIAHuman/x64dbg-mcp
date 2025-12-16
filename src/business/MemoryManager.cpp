@@ -151,8 +151,7 @@ std::vector<MemorySearchResult> MemoryManager::Search(
     
     std::vector<MemorySearchResult> results;
     
-    // 简化的搜索实现（实际应使用 x64dbg 的搜索 API）
-    // 这里只是示意性代码
+    // 获取内存区域
     auto regions = EnumerateRegions();
     
     for (const auto& region : regions) {
@@ -160,19 +159,66 @@ std::vector<MemorySearchResult> MemoryManager::Search(
             break;
         }
         
-        // 检查地址范围
-        if (startAddress > 0 && region.base < startAddress) continue;
-        if (endAddress > 0 && region.base > endAddress) break;
-        
-        // 跳过不可读区域
-        uint64_t checkSize = region.size < 4096 ? region.size : 4096;
-        if (!IsReadable(region.base, checkSize)) {
+        // 跳过非 MEM_COMMIT 区域
+        if (region.type != "MEM_COMMIT") {
             continue;
         }
         
-        // 搜索该区域（实际应分块读取）
-        // 这里只是占位代码
-        Logger::Trace("Searching region: 0x{:X} - 0x{:X}", region.base, region.base + region.size);
+        // 检查地址范围
+        uint64_t regionEnd = region.base + region.size;
+        if (startAddress > 0 && regionEnd <= startAddress) continue;
+        if (endAddress > 0 && region.base >= endAddress) continue;
+        
+        // 计算实际搜索范围
+        uint64_t searchStart = region.base;
+        uint64_t searchEnd = regionEnd;
+        if (startAddress > 0 && searchStart < startAddress) {
+            searchStart = startAddress;
+        }
+        if (endAddress > 0 && searchEnd > endAddress) {
+            searchEnd = endAddress;
+        }
+        
+        // 跳过不可读区域
+        if (!IsReadable(searchStart, std::min<size_t>(4096, searchEnd - searchStart))) {
+            continue;
+        }
+        
+        Logger::Trace("Searching region: 0x{:X} - 0x{:X}", searchStart, searchEnd);
+        
+        // 分块读取并搜索
+        const size_t chunkSize = 64 * 1024; // 64KB chunks
+        for (uint64_t addr = searchStart; addr < searchEnd && results.size() < maxResults; ) {
+            size_t readSize = std::min<size_t>(chunkSize, searchEnd - addr);
+            if (readSize == 0) break;
+            
+            try {
+                // 读取内存块
+                std::vector<uint8_t> buffer(readSize);
+                if (!DbgMemRead(addr, buffer.data(), readSize)) {
+                    // 读取失败，跳过此块
+                    addr += readSize;
+                    continue;
+                }
+                
+                // 在内存块中搜索模式
+                for (size_t i = 0; i + patternBytes.size() <= buffer.size() && results.size() < maxResults; ++i) {
+                    if (MatchPattern(buffer.data() + i, patternBytes, mask)) {
+                        MemorySearchResult match;
+                        match.address = addr + i;
+                        match.data.assign(buffer.begin() + i, 
+                                        buffer.begin() + i + patternBytes.size());
+                        results.push_back(match);
+                        Logger::Trace("Found match at 0x{:X}", match.address);
+                    }
+                }
+                
+                addr += readSize;
+            } catch (...) {
+                // 读取失败，跳过此块
+                addr += readSize;
+            }
+        }
     }
     
     Logger::Info("Found {} matches for pattern", results.size());
@@ -184,35 +230,57 @@ std::optional<MemoryRegion> MemoryManager::GetMemoryInfo(uint64_t address) {
         throw DebuggerNotRunningException();
     }
     
-    // 尝试读取该地址以验证可访问性
-    uint8_t testByte = 0;
-    if (!DbgMemIsValidReadPtr(address)) {
+    // 获取进程句柄
+    HANDLE hProcess = DbgGetProcessHandle();
+    if (hProcess == nullptr) {
+        Logger::Warning("Failed to get process handle for memory info query");
         return std::nullopt;
     }
     
-    // 查找内存区域的基址
-    duint base = 0;
-    if (!DbgMemFindBaseAddr(address, &base)) {
+    // 使用 VirtualQueryEx 获取内存信息
+    MEMORY_BASIC_INFORMATION mbi;
+    SIZE_T result = VirtualQueryEx(
+        hProcess,
+        reinterpret_cast<LPCVOID>(address),
+        &mbi,
+        sizeof(mbi)
+    );
+    
+    if (result == 0) {
+        Logger::Debug("VirtualQueryEx failed for address 0x{:X}", address);
         return std::nullopt;
     }
     
-    // 构建基本的内存区域信息
+    // 构建内存区域信息
     MemoryRegion region;
-    region.base = base;
+    region.base = reinterpret_cast<uint64_t>(mbi.BaseAddress);
+    region.size = mbi.RegionSize;
+    region.protection = ProtectionToString(mbi.Protect);
     
-    // 尝试确定区域大小(简化实现,实际应该查询完整的内存映射)
-    // 从基址开始逐步探测直到找到边界
-    duint size = 0x1000; // 至少一页
-    duint probe = base + size;
-    while (DbgMemIsValidReadPtr(probe) && size < 0x10000000) { // 限制最大256MB
-        size += 0x1000;
-        probe = base + size;
+    // 转换内存状态
+    switch (mbi.State) {
+        case MEM_COMMIT:
+            region.type = "MEM_COMMIT";
+            break;
+        case MEM_RESERVE:
+            region.type = "MEM_RESERVE";
+            break;
+        case MEM_FREE:
+            region.type = "MEM_FREE";
+            break;
+        default:
+            region.type = "UNKNOWN";
+            break;
     }
-    region.size = size;
     
-    // 简化的保护属性(实际应该通过VirtualQueryEx获取)
-    region.protection = "PAGE_READWRITE"; // 默认值
-    region.type = "MEM_COMMIT";
+    // 尝试获取模块名或其他信息（使用 x64dbg API）
+    char modName[MAX_MODULE_SIZE] = {0};
+    if (DbgGetModuleAt(address, modName)) {
+        region.info = modName;
+    }
+    
+    Logger::Debug("GetMemoryInfo for 0x{:X}: base=0x{:X}, size=0x{:X}, type={}", 
+                  address, region.base, region.size, region.type);
     
     return region;
 }
@@ -225,7 +293,50 @@ std::vector<MemoryRegion> MemoryManager::EnumerateRegions() {
     std::vector<MemoryRegion> regions;
     
     // 使用 x64dbg API 枚举内存区域
-    // 实际实现需要调用 DbgMemMap() 或类似函数
+    MEMMAP memmap = {0};
+    if (!DbgMemMap(&memmap)) {
+        Logger::Warning("Failed to enumerate memory regions");
+        return regions;
+    }
+    
+    // 遍历所有内存页
+    for (int i = 0; i < memmap.count; i++) {
+        const MEMPAGE& page = memmap.page[i];
+        const MEMORY_BASIC_INFORMATION& mbi = page.mbi;
+        
+        MemoryRegion region;
+        region.base = reinterpret_cast<uint64_t>(mbi.BaseAddress);
+        region.size = mbi.RegionSize;
+        region.protection = ProtectionToString(mbi.Protect);
+        
+        // 转换内存类型
+        switch (mbi.State) {
+            case MEM_COMMIT:
+                region.type = "MEM_COMMIT";
+                break;
+            case MEM_RESERVE:
+                region.type = "MEM_RESERVE";
+                break;
+            case MEM_FREE:
+                region.type = "MEM_FREE";
+                break;
+            default:
+                region.type = "UNKNOWN";
+                break;
+        }
+        
+        // 使用模块信息（如果有）
+        if (page.info[0] != '\0') {
+            region.info = page.info;
+        }
+        
+        regions.push_back(region);
+    }
+    
+    // 释放内存映射
+    if (memmap.page) {
+        BridgeFree(memmap.page);
+    }
     
     Logger::Debug("Enumerated {} memory regions", regions.size());
     return regions;
@@ -277,19 +388,61 @@ bool MemoryManager::IsWritable(uint64_t address, size_t size) {
 }
 
 uint64_t MemoryManager::Allocate(size_t size) {
-    // 使用 x64dbg API 分配内存
-    // 实际实现需要调用 DbgMemAlloc() 或 VirtualAllocEx
+    if (!DebugController::Instance().IsDebugging()) {
+        throw DebuggerNotRunningException();
+    }
     
-    Logger::Info("Allocated {} bytes", size);
-    return 0;  // 占位
+    // 使用 Windows API VirtualAllocEx 在目标进程中分配内存
+    HANDLE hProcess = DbgGetProcessHandle();
+    if (hProcess == nullptr) {
+        Logger::Error("Failed to get process handle for memory allocation");
+        throw MCPException("Failed to allocate memory");
+    }
+    
+    LPVOID allocatedAddr = VirtualAllocEx(
+        hProcess,
+        nullptr,                    // 让系统选择地址
+        size,
+        MEM_COMMIT | MEM_RESERVE,   // 提交并保留
+        PAGE_EXECUTE_READWRITE      // 可读写执行
+    );
+    
+    if (allocatedAddr == nullptr) {
+        DWORD error = GetLastError();
+        Logger::Error("VirtualAllocEx failed with error code: {}", error);
+        throw MCPException("Failed to allocate memory");
+    }
+    
+    Logger::Info("Allocated {} bytes at 0x{:X}", size, reinterpret_cast<uint64_t>(allocatedAddr));
+    return reinterpret_cast<uint64_t>(allocatedAddr);
 }
 
 bool MemoryManager::Free(uint64_t address) {
-    // 使用 x64dbg API 释放内存
-    // 实际实现需要调用 DbgMemFree() 或 VirtualFreeEx
+    if (!DebugController::Instance().IsDebugging()) {
+        throw DebuggerNotRunningException();
+    }
+    
+    HANDLE hProcess = DbgGetProcessHandle();
+    if (hProcess == nullptr) {
+        Logger::Error("Failed to get process handle for memory free");
+        return false;
+    }
+    
+    BOOL result = VirtualFreeEx(
+        hProcess,
+        reinterpret_cast<LPVOID>(address),
+        0,
+        MEM_RELEASE
+    );
+    
+    if (!result) {
+        DWORD error = GetLastError();
+        Logger::Error("VirtualFreeEx failed with error code: {}", error);
+        return false;
+    }
     
     Logger::Info("Freed memory at 0x{:X}", address);
-    return true;  // 占位
+    return true;
 }
 
 std::vector<uint8_t> MemoryManager::ParsePattern(const std::string& pattern) {

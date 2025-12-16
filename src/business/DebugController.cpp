@@ -70,6 +70,9 @@ uint64_t DebugController::StepInto() {
         throw OperationTimeoutException("Step into timeout");
     }
     
+    // 给 x64dbg 一点时间更新寄存器状态
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    
     return GetInstructionPointer();
 }
 
@@ -88,6 +91,9 @@ uint64_t DebugController::StepOver() {
         throw OperationTimeoutException("Step over timeout");
     }
     
+    // 给 x64dbg 一点时间更新寄存器状态
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    
     return GetInstructionPointer();
 }
 
@@ -105,6 +111,9 @@ uint64_t DebugController::StepOut() {
     if (!WaitForPause()) {
         throw OperationTimeoutException("Step out timeout");
     }
+    
+    // 给 x64dbg 一点时间更新寄存器状态
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     
     return GetInstructionPointer();
 }
