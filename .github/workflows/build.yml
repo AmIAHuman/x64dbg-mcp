@@ -23,13 +23,15 @@ jobs:
             triplet: x86-windows
             artifact: x32dbg_mcp.dp32
 
+    env:
+      VCPKG_BINARY_SOURCES: clear
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: 'a7b6122f6b6504d16d96117336a0562693579933'
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git ${{ github.workspace }}/vcpkg
+          & ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.bat -disableMetrics
 
       - name: Configure CMake
         run: >
