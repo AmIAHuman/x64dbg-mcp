@@ -4,6 +4,7 @@
 #include "../core/RequestValidator.h"
 #include "../core/Logger.h"
 #include "../utils/StringUtils.h"
+#include "bridgemain.h"
 #include <windows.h>
 #include <chrono>
 
