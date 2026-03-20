@@ -216,7 +216,18 @@ void MCPToolRegistry::RegisterDefaultTools() {
         "debug.stop",
         {}
     });
-    
+
+    RegisterTool({
+        "debug_load_binary",
+        "Load a binary file into the debugger. Starts a new debug session with the specified executable. Optionally pass command-line arguments. Returns when the debugger has attached and paused at the entry point.",
+        "debug.load_binary",
+        {
+            {"path", "string", "Full path to the executable to debug (e.g. 'C:\\\\analysis\\\\sample.exe')", true, nullptr, nullptr},
+            {"args", "string", "Command-line arguments to pass to the executable", false, nullptr, nullptr},
+            {"timeout", "integer", "Timeout in milliseconds to wait for debugger attach (default 10000)", false, 10000, nullptr}
+        }
+    });
+
     // 2. Register Tools
     RegisterTool({
         "register_get",

@@ -62,6 +62,11 @@ public:
      */
     static json Stop(const json& params);
 
+    /**
+     * @brief debug.load_binary - Load a binary file into the debugger
+     */
+    static json LoadBinary(const json& params);
+
 private:
     static std::string StateToString(DebugState state);
 };

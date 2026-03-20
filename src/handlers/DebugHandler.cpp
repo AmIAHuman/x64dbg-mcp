@@ -5,6 +5,7 @@
 #include "../core/Logger.h"
 #include "../utils/StringUtils.h"
 #include <windows.h>
+#include <chrono>
 
 namespace MCP {
 
@@ -20,7 +21,8 @@ void DebugHandler::RegisterMethods() {
     dispatcher.RegisterMethod("debug.run_to", RunTo);
     dispatcher.RegisterMethod("debug.restart", Restart);
     dispatcher.RegisterMethod("debug.stop", Stop);
-    
+    dispatcher.RegisterMethod("debug.load_binary", LoadBinary);
+
     Logger::Info("Registered debug.* methods");
 }
 
@@ -164,6 +166,91 @@ json DebugHandler::Stop(const json& params) {
     return {
         {"success", success}
     };
+}
+
+json DebugHandler::LoadBinary(const json& params) {
+    RequestValidator::RequireString(params, "path");
+
+    std::string path = params["path"].get<std::string>();
+    std::string args;
+    int timeout = 10000;
+
+    if (params.contains("args") && params["args"].is_string()) {
+        args = params["args"].get<std::string>();
+    }
+    if (params.contains("timeout") && params["timeout"].is_number_integer()) {
+        timeout = params["timeout"].get<int>();
+        if (timeout <= 0) timeout = 10000;
+    }
+
+    // Escape quotes in the path
+    std::string escapedPath = path;
+    size_t quotePos = 0;
+    while ((quotePos = escapedPath.find('"', quotePos)) != std::string::npos) {
+        escapedPath.replace(quotePos, 1, "\\\"");
+        quotePos += 2;
+    }
+
+    // Build the init command
+    std::string initCommand;
+    if (args.empty()) {
+        initCommand = "init \"" + escapedPath + "\"";
+    } else {
+        std::string escapedArgs = args;
+        quotePos = 0;
+        while ((quotePos = escapedArgs.find('"', quotePos)) != std::string::npos) {
+            escapedArgs.replace(quotePos, 1, "\\\"");
+            quotePos += 2;
+        }
+        initCommand = "init \"" + escapedPath + "\", \"" + escapedArgs + "\"";
+    }
+
+    Logger::Info("LoadBinary: executing '{}'", initCommand);
+
+    if (!DbgCmdExec(initCommand.c_str())) {
+        return {
+            {"success", false},
+            {"error", "Failed to execute init command"}
+        };
+    }
+
+    // Poll until debugger is active or timeout
+    auto start = std::chrono::steady_clock::now();
+    auto& controller = DebugController::Instance();
+
+    while (!controller.IsDebugging()) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start
+        ).count();
+        if (elapsed >= timeout) {
+            return {
+                {"success", false},
+                {"error", "Timeout waiting for debugger to attach"}
+            };
+        }
+        Sleep(10);
+    }
+
+    // Wait a bit for the debugger state to stabilize
+    Sleep(50);
+
+    json result = {
+        {"success", true},
+        {"path", path},
+        {"state", "paused"}
+    };
+
+    // Try to get instruction pointer
+    if (controller.IsPaused()) {
+        try {
+            uint64_t rip = controller.GetInstructionPointer();
+            result["rip"] = StringUtils::FormatAddress(rip);
+        } catch (...) {
+            // Ignore
+        }
+    }
+
+    return result;
 }
 
 std::string DebugHandler::StateToString(DebugState state) {
