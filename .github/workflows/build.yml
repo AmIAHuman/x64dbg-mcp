@@ -1,0 +1,75 @@
+name: Build
+
+on:
+  push:
+    branches: [main, dev]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64, x86]
+        include:
+          - arch: x64
+            platform: x64
+            triplet: x64-windows
+            artifact: x64dbg_mcp.dp64
+          - arch: x86
+            platform: Win32
+            triplet: x86-windows
+            artifact: x32dbg_mcp.dp32
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 'a7b6122f6b6504d16d96117336a0562693579933'
+
+      - name: Configure CMake
+        run: >
+          cmake -B build_${{ matrix.arch }}
+          -G "Visual Studio 17 2022"
+          -A ${{ matrix.platform }}
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+          -DXDBG_ARCH=${{ matrix.arch }}
+
+      - name: Build
+        run: cmake --build build_${{ matrix.arch }} --config Release --parallel
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: build_${{ matrix.arch }}/bin/Release/${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: x64dbg_mcp.dp64
+
+      - name: Download x86 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: x32dbg_mcp.dp32
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            x64dbg_mcp.dp64
+            x32dbg_mcp.dp32
