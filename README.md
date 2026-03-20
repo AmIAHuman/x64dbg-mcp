@@ -9,15 +9,15 @@ A Model Context Protocol (MCP) server implementation for x64dbg and x32dbg, enab
 ## Features
 
 - **Full MCP Specification Compliance**: Implements all three core MCP building blocks
-  - **Tools (69)**: AI-invokable debugging functions
+  - **Tools (70)**: AI-invokable debugging functions
   - **Resources (15)**: Application-controlled context data sources
   - **Prompts (10)**: User-guided debugging workflow templates
   
 - **JSON-RPC 2.0 Protocol**: Standard, language-agnostic interface
 - **HTTP + SSE Communication**: Modern web-based integration via Server-Sent Events
 
-- **Tools - AI-Controlled Debugging (69 functions)**: 
-  - Execution control (run, pause, step, run_to)
+- **Tools - AI-Controlled Debugging (70 functions)**:
+  - Execution control (run, pause, step, run_to, load_binary)
   - Memory read/write/search/allocate
   - Register access (50+ registers including GPR, SSE, AVX)
   - Breakpoint management (software, hardware, memory, conditional, logging)
@@ -311,6 +311,7 @@ Configure in VS Code settings or MCP client config:
 - `debug.run_to` - Run to specific address
 - `debug.restart` - Restart debugging session
 - `debug.stop` - Stop debugging
+- `debug.load_binary` - Load a binary file into the debugger
 
 ### Register Operations
 - `register.get` - Read single register
