@@ -150,7 +150,7 @@ INT_PTR CALLBACK ConfigEditor::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam
 void ConfigEditor::LoadConfigToControls(HWND hwndDlg, const json& config) {
     // Server settings
     SetDlgItemTextA(hwndDlg, IDC_SERVER_ADDRESS, 
-        config.value("server", json::object()).value("address", "127.0.0.1").c_str());
+        config.value("server", json::object()).value("address", "0.0.0.0").c_str());
     SetDlgItemInt(hwndDlg, IDC_SERVER_PORT, 
         config.value("server", json::object()).value("port", 3000), FALSE);
     

@@ -223,7 +223,7 @@ instructions = response["result"]["instructions"]
 {
   "version": "1.0.3",
   "server": {
-    "address": "127.0.0.1",
+    "address": "0.0.0.0",
     "port": 3000
   },
   "permissions": {

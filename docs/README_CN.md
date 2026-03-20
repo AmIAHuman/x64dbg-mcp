@@ -212,7 +212,7 @@ copy config.json <x64dbg-path>\x32\plugins\x32dbg-mcp\
 {
   "version": "1.0.3",
   "server": {
-    "address": "127.0.0.1",
+    "address": "0.0.0.0",
     "port": 3000
   },
   "permissions": {
@@ -397,7 +397,7 @@ for event in client.subscribe_events():
 
 - 默认情况下，内存和寄存器写操作为 **禁用**
 - 仅在必要时于 `config.json` 中启用写权限
-- 服务默认监听本地地址（127.0.0.1）
+- 服务默认监听所有接口（0.0.0.0）
 - 单客户端连接限制可避免资源耗尽
 - 所有操作都要求调试器处于暂停状态
 

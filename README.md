@@ -212,7 +212,7 @@ Edit `config.json` to customize settings:
 {
   "version": "1.0.3",
   "server": {
-    "address": "127.0.0.1",
+    "address": "0.0.0.0",
     "port": 3000
   },
   "permissions": {
@@ -398,7 +398,7 @@ The plugin is organized into four layers:
 
 - By default, memory and register write operations are **disabled**
 - Enable write permissions in `config.json` only if needed
-- Server listens on localhost (127.0.0.1) by default
+- Server listens on all interfaces (0.0.0.0) by default
 - Single client connection limit prevents resource exhaustion
 - All operations require the debugger to be in a paused state
 

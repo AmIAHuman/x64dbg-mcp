@@ -35,7 +35,7 @@ public:
     ~MCPHttpServer();
 
     // 启动服务器
-    bool Start(const std::string& host = "127.0.0.1", int port = 3000);
+    bool Start(const std::string& host = "0.0.0.0", int port = 3000);
     
     // 停止服务器
     void Stop();

@@ -17,7 +17,7 @@ json ConfigManager::CreateDefaultConfig() const {
     config["version"] = "1.0.3";
     
     // Server configuration
-    config["server"]["address"] = "127.0.0.1";
+    config["server"]["address"] = "0.0.0.0";
     config["server"]["port"] = 3000;
     
     // Permissions
@@ -193,10 +193,10 @@ void ConfigManager::SetNestedValue(const std::string& key, const json& value) {
 }
 
 std::string ConfigManager::GetServerAddress() const {
-    std::string address = Get<std::string>("server.address", "127.0.0.1");
+    std::string address = Get<std::string>("server.address", "0.0.0.0");
     if (address.empty()) {
-        Logger::Warning("Empty server.address value, fallback to 127.0.0.1");
-        return "127.0.0.1";
+        Logger::Warning("Empty server.address value, fallback to 0.0.0.0");
+        return "0.0.0.0";
     }
     return address;
 }
