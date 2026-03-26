@@ -40,6 +40,11 @@ public:
      * @brief module.list_imports - List imported functions used by a module
      */
     static json ListImports(const json& params);
+
+    /**
+     * @brief module.list_strings - List strings found in a module's memory
+     */
+    static json ListStrings(const json& params);
 };
 
 } // namespace MCP

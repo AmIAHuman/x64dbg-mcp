@@ -615,6 +615,18 @@ void MCPToolRegistry::RegisterDefaultTools() {
             {"module", "string", "Module name or base address", true, nullptr, nullptr}
         }
     });
+
+    RegisterTool({
+        "module_list_strings",
+        "List strings found in a module's memory",
+        "module.list_strings",
+        {
+            {"module", "string", "Module name or base address", true, nullptr, nullptr},
+            {"min_length", "integer", "Minimum string length (default 4)", false, 4, nullptr},
+            {"encoding", "string", "String encoding to search for", false, "auto",
+             json::array({"auto", "ascii", "unicode"})}
+        }
+    });
     
     // 12. Extended Thread Tools
     RegisterTool({

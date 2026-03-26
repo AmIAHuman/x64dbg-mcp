@@ -9,6 +9,7 @@
 #include "../core/Logger.h"
 #include "../utils/StringUtils.h"
 #include <_scriptapi_module.h>
+#include <_scriptapi_memory.h>
 #include <bridgelist.h>
 
 namespace MCP {
@@ -110,6 +111,7 @@ void ModuleHandler::RegisterMethods() {
     dispatcher.RegisterMethod("module.get", Get);
     dispatcher.RegisterMethod("module.get_main", GetMain);
     dispatcher.RegisterMethod("module.list_imports", ListImports);
+    dispatcher.RegisterMethod("module.list_strings", ListStrings);
 
     Logger::Info("Registered module.* methods");
 }
@@ -273,6 +275,164 @@ json ModuleHandler::ListImports(const json& params) {
     }
 
     return {{"imports", imports}, {"count", importList.Count()}};
+}
+
+json ModuleHandler::ListStrings(const json& params) {
+    if (!params.contains("module")) {
+        throw InvalidParamsException("Missing required parameter: module");
+    }
+
+    std::string module = params["module"].get<std::string>();
+    int minLength = 4;
+    std::string encoding = "auto";
+
+    if (params.contains("min_length") && params["min_length"].is_number_integer()) {
+        minLength = params["min_length"].get<int>();
+        if (minLength < 1) minLength = 4;
+    }
+    if (params.contains("encoding") && params["encoding"].is_string()) {
+        encoding = params["encoding"].get<std::string>();
+    }
+
+    // Resolve module
+    Script::Module::ModuleInfo info = {};
+    bool success = false;
+
+    try {
+        duint address = StringUtils::ParseAddress(module);
+        success = Script::Module::InfoFromAddr(address, &info);
+    } catch (...) {
+        success = false;
+    }
+    if (!success) {
+        success = Script::Module::InfoFromName(module.c_str(), &info);
+    }
+    if (!success) {
+        success = ResolveModuleByQueryFallback(module, &info);
+    }
+    if (!success) {
+        throw MCPException("Module not found", -32000);
+    }
+
+    const duint moduleBase = info.base;
+    const duint moduleSize = info.size;
+    const size_t maxResults = 10000;
+    const size_t chunkSize = 65536;
+
+    json strings = json::array();
+
+    // Read and scan module memory in chunks
+    std::vector<uint8_t> buffer(chunkSize);
+
+    // ASCII scan
+    if (encoding == "auto" || encoding == "ascii") {
+        std::string currentStr;
+        duint currentAddr = 0;
+
+        for (duint offset = 0; offset < moduleSize && strings.size() < maxResults; offset += chunkSize) {
+            duint readSize = (offset + chunkSize > moduleSize) ? (moduleSize - offset) : chunkSize;
+            duint addr = moduleBase + offset;
+
+            if (!Script::Memory::Read(addr, buffer.data(), readSize, nullptr)) {
+                // Flush any pending string before skipping
+                if (static_cast<int>(currentStr.size()) >= minLength) {
+                    strings.push_back({
+                        {"value", currentStr},
+                        {"address", StringUtils::FormatAddress(static_cast<uint64_t>(currentAddr))},
+                        {"encoding", "ascii"},
+                        {"length", currentStr.size()}
+                    });
+                }
+                currentStr.clear();
+                continue;
+            }
+
+            for (duint i = 0; i < readSize && strings.size() < maxResults; ++i) {
+                uint8_t b = buffer[i];
+                if (b >= 0x20 && b <= 0x7E) {
+                    if (currentStr.empty()) {
+                        currentAddr = addr + i;
+                    }
+                    currentStr += static_cast<char>(b);
+                } else {
+                    if (static_cast<int>(currentStr.size()) >= minLength) {
+                        strings.push_back({
+                            {"value", currentStr},
+                            {"address", StringUtils::FormatAddress(static_cast<uint64_t>(currentAddr))},
+                            {"encoding", "ascii"},
+                            {"length", currentStr.size()}
+                        });
+                    }
+                    currentStr.clear();
+                }
+            }
+        }
+        // Flush remaining
+        if (static_cast<int>(currentStr.size()) >= minLength && strings.size() < maxResults) {
+            strings.push_back({
+                {"value", currentStr},
+                {"address", StringUtils::FormatAddress(static_cast<uint64_t>(currentAddr))},
+                {"encoding", "ascii"},
+                {"length", currentStr.size()}
+            });
+        }
+    }
+
+    // Unicode (UTF-16LE) scan
+    if (encoding == "auto" || encoding == "unicode") {
+        std::string currentStr;
+        duint currentAddr = 0;
+
+        for (duint offset = 0; offset < moduleSize && strings.size() < maxResults; offset += chunkSize) {
+            duint readSize = (offset + chunkSize > moduleSize) ? (moduleSize - offset) : chunkSize;
+            duint addr = moduleBase + offset;
+
+            if (!Script::Memory::Read(addr, buffer.data(), readSize, nullptr)) {
+                if (static_cast<int>(currentStr.size()) >= minLength) {
+                    strings.push_back({
+                        {"value", currentStr},
+                        {"address", StringUtils::FormatAddress(static_cast<uint64_t>(currentAddr))},
+                        {"encoding", "unicode"},
+                        {"length", currentStr.size()}
+                    });
+                }
+                currentStr.clear();
+                continue;
+            }
+
+            for (duint i = 0; i + 1 < readSize && strings.size() < maxResults; i += 2) {
+                uint8_t lo = buffer[i];
+                uint8_t hi = buffer[i + 1];
+                if (lo >= 0x20 && lo <= 0x7E && hi == 0x00) {
+                    if (currentStr.empty()) {
+                        currentAddr = addr + i;
+                    }
+                    currentStr += static_cast<char>(lo);
+                } else {
+                    if (static_cast<int>(currentStr.size()) >= minLength) {
+                        strings.push_back({
+                            {"value", currentStr},
+                            {"address", StringUtils::FormatAddress(static_cast<uint64_t>(currentAddr))},
+                            {"encoding", "unicode"},
+                            {"length", currentStr.size()}
+                        });
+                    }
+                    currentStr.clear();
+                }
+            }
+        }
+        // Flush remaining
+        if (static_cast<int>(currentStr.size()) >= minLength && strings.size() < maxResults) {
+            strings.push_back({
+                {"value", currentStr},
+                {"address", StringUtils::FormatAddress(static_cast<uint64_t>(currentAddr))},
+                {"encoding", "unicode"},
+                {"length", currentStr.size()}
+            });
+        }
+    }
+
+    return {{"strings", strings}, {"count", strings.size()}};
 }
 
 } // namespace MCP
