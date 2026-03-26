@@ -109,7 +109,8 @@ void ModuleHandler::RegisterMethods() {
     dispatcher.RegisterMethod("module.list", List);
     dispatcher.RegisterMethod("module.get", Get);
     dispatcher.RegisterMethod("module.get_main", GetMain);
-    
+    dispatcher.RegisterMethod("module.list_imports", ListImports);
+
     Logger::Info("Registered module.* methods");
 }
 
@@ -213,6 +214,65 @@ json ModuleHandler::GetMain(const json& params) {
     result["path"] = StringUtils::FixUtf8Mojibake(info.path);
     
     return result;
+}
+
+json ModuleHandler::ListImports(const json& params) {
+    if (!params.contains("module")) {
+        throw InvalidParamsException("Missing required parameter: module");
+    }
+
+    std::string module = params["module"].get<std::string>();
+
+    // Resolve module using the same pattern as Get()
+    Script::Module::ModuleInfo info = {};
+    bool success = false;
+
+    try {
+        duint address = StringUtils::ParseAddress(module);
+        success = Script::Module::InfoFromAddr(address, &info);
+    } catch (...) {
+        success = false;
+    }
+    if (!success) {
+        success = Script::Module::InfoFromName(module.c_str(), &info);
+    }
+    if (!success) {
+        success = ResolveModuleByQueryFallback(module, &info);
+    }
+    if (!success) {
+        throw MCPException("Module not found", -32000);
+    }
+
+    // Get imports
+    BridgeList<Script::Module::ModuleImport> importList;
+    if (!Script::Module::GetImports(&info, &importList)) {
+        return {{"imports", json::array()}, {"count", 0}};
+    }
+
+    json imports = json::array();
+    for (int i = 0; i < importList.Count(); ++i) {
+        const auto& imp = importList.Data()[i];
+
+        json entry = json::object();
+        entry["function"] = StringUtils::FixUtf8Mojibake(imp.name);
+        entry["address"] = StringUtils::FormatAddress(static_cast<uint64_t>(imp.iatVa));
+
+        if (imp.ordinal != static_cast<duint>(-1)) {
+            entry["ordinal"] = static_cast<uint64_t>(imp.ordinal);
+        }
+
+        // Resolve DLL name from the IAT address
+        char dllName[MAX_MODULE_SIZE] = {};
+        if (imp.iatVa != 0 && Script::Module::NameFromAddr(imp.iatVa, dllName)) {
+            entry["dll"] = StringUtils::FixUtf8Mojibake(dllName);
+        } else {
+            entry["dll"] = "";
+        }
+
+        imports.push_back(entry);
+    }
+
+    return {{"imports", imports}, {"count", importList.Count()}};
 }
 
 } // namespace MCP

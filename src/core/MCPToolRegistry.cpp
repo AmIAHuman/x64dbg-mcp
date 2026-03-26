@@ -606,6 +606,15 @@ void MCPToolRegistry::RegisterDefaultTools() {
         "module.get_main",
         {}
     });
+
+    RegisterTool({
+        "module_list_imports",
+        "List imported functions used by a module",
+        "module.list_imports",
+        {
+            {"module", "string", "Module name or base address", true, nullptr, nullptr}
+        }
+    });
     
     // 12. Extended Thread Tools
     RegisterTool({

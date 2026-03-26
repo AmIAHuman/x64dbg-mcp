@@ -35,6 +35,11 @@ public:
      * @brief 获取主模块信息
      */
     static json GetMain(const json& params);
+
+    /**
+     * @brief module.list_imports - List imported functions used by a module
+     */
+    static json ListImports(const json& params);
 };
 
 } // namespace MCP
