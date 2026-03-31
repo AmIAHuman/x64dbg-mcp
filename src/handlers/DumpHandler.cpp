@@ -15,7 +15,6 @@ void DumpHandler::RegisterMethods() {
     
     dispatcher.RegisterMethod("dump.module", DumpModule);
     dispatcher.RegisterMethod("dump.memory_region", DumpMemoryRegion);
-    dispatcher.RegisterMethod("dump.auto_unpack", AutoUnpackAndDump);
     dispatcher.RegisterMethod("dump.analyze_module", AnalyzeModule);
     dispatcher.RegisterMethod("dump.detect_oep", DetectOEP);
     dispatcher.RegisterMethod("dump.get_dumpable_regions", GetDumpableRegions);
@@ -119,48 +118,6 @@ nlohmann::json DumpHandler::DumpMemoryRegion(const nlohmann::json& params) {
     auto result = manager.DumpMemoryRegion(address, size, outputPath, asRawBinary);
     
     return DumpResultToJson(result);
-}
-
-nlohmann::json DumpHandler::AutoUnpackAndDump(const nlohmann::json& params) {
-    // 妫€鏌ュ啓鏉冮檺
-    if (!PermissionChecker::Instance().IsMemoryWriteAllowed()) {
-        throw PermissionDeniedException("Auto-unpacking requires write permission");
-    }
-    
-    // 楠岃瘉鍙傛暟
-    if (!params.contains("module")) {
-        throw InvalidParamsException("Missing required parameter: module");
-    }
-    
-    if (!params.contains("output_path")) {
-        throw InvalidParamsException("Missing required parameter: output_path");
-    }
-    
-    std::string module = params["module"].get<std::string>();
-    std::string outputPath = params["output_path"].get<std::string>();
-    int maxIterations = params.value("max_iterations", 10);
-    std::string strategy = params.value("strategy", "code_analysis");
-
-    static const std::set<std::string> validStrategies = {
-        "entropy", "code_analysis", "api_calls", "tls", "entrypoint"
-    };
-    if (validStrategies.find(strategy) == validStrategies.end()) {
-        throw InvalidParamsException(
-            "Invalid strategy '" + strategy + "'. Valid strategies: entropy, code_analysis, api_calls, tls, entrypoint"
-        );
-    }
-    
-    auto& manager = DumpManager::Instance();
-    auto result = manager.AutoUnpackAndDump(module, outputPath, maxIterations, strategy, nullptr);
-    
-    nlohmann::json response = DumpResultToJson(result);
-    
-    // 娣诲姞棰濆鐨勮嚜鍔ㄨ劚澹充俊鎭?
-    if (result.success && result.newEP != 0) {
-        response["detected_oep"] = StringUtils::FormatAddress(result.newEP);
-    }
-    
-    return response;
 }
 
 nlohmann::json DumpHandler::AnalyzeModule(const nlohmann::json& params) {

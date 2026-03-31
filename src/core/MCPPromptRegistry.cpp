@@ -76,7 +76,7 @@ std::string MCPPromptDefinition::GeneratePrompt(const json& args) const {
             << "2. Locate the Original Entry Point (OEP)\n"
             << "3. Dump the unpacked code from memory\n"
             << "4. Rebuild the PE structure\n\n"
-            << "Use dump_analyze_module, dump_detect_oep, and dump_auto_unpack tools.";
+            << "Use dump_analyze_module and dump_detect_oep tools.";
     }
     else if (name == "reverse-algorithm") {
         std::string start_address = args.value("start_address", "current");

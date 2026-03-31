@@ -9,7 +9,6 @@ namespace MCP {
  * 实现的方法：
  * - dump.module: Dump指定模块到文件
  * - dump.memory_region: Dump指定内存区域
- * - dump.auto_unpack: 自动脱壳dump
  * - dump.analyze_module: 分析模块是否加壳
  * - dump.detect_oep: 检测原始入口点
  * - dump.get_dumpable_regions: 获取可dump的内存区域
@@ -64,22 +63,6 @@ private:
      * }
      */
     static nlohmann::json DumpMemoryRegion(const nlohmann::json& params);
-    
-    /**
-     * @brief 自动脱壳dump
-     * @param params {
-     *   "module": "packed.exe",
-     *   "output_path": "C:\\dump\\unpacked.exe",
-     *   "max_iterations": 10  // 最大迭代次数
-     * }
-     * @return {
-     *   "success": true,
-     *   "file_path": "C:\\dump\\unpacked.exe",
-     *   "iterations": 2,
-     *   "detected_oep": "0x401000"
-     * }
-     */
-    static nlohmann::json AutoUnpackAndDump(const nlohmann::json& params);
     
     /**
      * @brief 分析模块
