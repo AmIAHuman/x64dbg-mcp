@@ -627,7 +627,16 @@ void MCPToolRegistry::RegisterDefaultTools() {
              json::array({"auto", "ascii", "unicode"})}
         }
     });
-    
+
+    RegisterTool({
+        "module_get_sections",
+        "Get PE section info for a module including names, sizes, characteristics, and entropy",
+        "module.get_sections",
+        {
+            {"module", "string", "Module name or base address", true, nullptr, nullptr}
+        }
+    });
+
     // 12. Extended Thread Tools
     RegisterTool({
         "thread_get",
@@ -704,19 +713,6 @@ void MCPToolRegistry::RegisterDefaultTools() {
             {"size", "integer", "Size in bytes", true, nullptr, nullptr},
             {"output_path", "string", "Output file path", true, nullptr, nullptr},
             {"as_raw_binary", "boolean", "Store bytes as-is without PE rebuild", false, false, nullptr}
-        }
-    });
-    
-    RegisterTool({
-        "dump_auto_unpack",
-        "Automatically unpack and dump packed executable",
-        "dump.auto_unpack",
-        {
-            {"module", "string", "Module name or base address", true, nullptr, nullptr},
-            {"output_path", "string", "Output file path", true, nullptr, nullptr},
-            {"max_iterations", "integer", "Maximum unpacking iterations", false, 10, nullptr},
-            {"strategy", "string", "Unpacking strategy (entropy, code_analysis, api_calls, tls, entrypoint)", false, "code_analysis",
-             json::array({"entropy", "code_analysis", "api_calls", "tls", "entrypoint"})}
         }
     });
     

@@ -11,6 +11,7 @@
 #include <_scriptapi_module.h>
 #include <_scriptapi_memory.h>
 #include <bridgelist.h>
+#include <cmath>
 
 namespace MCP {
 namespace {
@@ -112,6 +113,7 @@ void ModuleHandler::RegisterMethods() {
     dispatcher.RegisterMethod("module.get_main", GetMain);
     dispatcher.RegisterMethod("module.list_imports", ListImports);
     dispatcher.RegisterMethod("module.list_strings", ListStrings);
+    dispatcher.RegisterMethod("module.get_sections", GetSections);
 
     Logger::Info("Registered module.* methods");
 }
@@ -433,6 +435,103 @@ json ModuleHandler::ListStrings(const json& params) {
     }
 
     return {{"strings", strings}, {"count", strings.size()}};
+}
+
+json ModuleHandler::GetSections(const json& params) {
+    if (!params.contains("module")) {
+        throw InvalidParamsException("Missing required parameter: module");
+    }
+
+    std::string module = params["module"].get<std::string>();
+
+    // Resolve module
+    Script::Module::ModuleInfo info = {};
+    bool success = false;
+
+    try {
+        duint address = StringUtils::ParseAddress(module);
+        success = Script::Module::InfoFromAddr(address, &info);
+    } catch (...) {
+        success = false;
+    }
+    if (!success) {
+        success = Script::Module::InfoFromName(module.c_str(), &info);
+    }
+    if (!success) {
+        success = ResolveModuleByQueryFallback(module, &info);
+    }
+    if (!success) {
+        throw MCPException("Module not found", -32000);
+    }
+
+    // Get section list
+    BridgeList<Script::Module::ModuleSectionInfo> sectionList;
+    if (!Script::Module::SectionListFromAddr(info.base, &sectionList)) {
+        return {{"sections", json::array()}, {"count", 0}};
+    }
+
+    json sections = json::array();
+    const size_t chunkSize = 65536;
+    std::vector<uint8_t> buffer;
+
+    for (int i = 0; i < sectionList.Count(); ++i) {
+        const auto& sec = sectionList.Data()[i];
+
+        json entry = json::object();
+        entry["name"] = StringUtils::FixUtf8Mojibake(sec.name);
+        entry["virtual_address"] = StringUtils::FormatAddress(static_cast<uint64_t>(sec.addr));
+        entry["virtual_size"] = static_cast<uint64_t>(sec.size);
+
+        // Read section characteristics from PE header
+        // Section characteristics are at offset 36 (0x24) in the IMAGE_SECTION_HEADER
+        // but we don't have direct access via the SDK. Read the PE header to get them.
+        uint32_t characteristics = 0;
+        // Walk PE header: DOS header -> NT headers -> section headers
+        uint32_t peOffset = 0;
+        if (Script::Memory::ReadDword(info.base + 0x3C, &peOffset)) {
+            // Section headers start after optional header
+            // NT signature (4) + FileHeader (20) + SizeOfOptionalHeader
+            uint16_t optionalHeaderSize = 0;
+            Script::Memory::ReadWord(info.base + peOffset + 4 + 16, &optionalHeaderSize);
+            duint sectionHeaderBase = info.base + peOffset + 4 + 20 + optionalHeaderSize;
+            // Each section header is 40 bytes, characteristics at offset 36
+            duint charAddr = sectionHeaderBase + (i * 40) + 36;
+            Script::Memory::ReadDword(charAddr, &characteristics);
+        }
+        entry["characteristics"] = StringUtils::FormatAddress(static_cast<uint64_t>(characteristics));
+
+        // Calculate Shannon entropy
+        double entropy = 0.0;
+        if (sec.size > 0) {
+            uint64_t freq[256] = {};
+            uint64_t totalBytes = 0;
+
+            for (duint offset = 0; offset < sec.size; offset += chunkSize) {
+                duint readSize = (offset + chunkSize > sec.size) ? (sec.size - offset) : chunkSize;
+                buffer.resize(readSize);
+                if (Script::Memory::Read(sec.addr + offset, buffer.data(), readSize, nullptr)) {
+                    for (duint j = 0; j < readSize; ++j) {
+                        freq[buffer[j]]++;
+                    }
+                    totalBytes += readSize;
+                }
+            }
+
+            if (totalBytes > 0) {
+                for (int b = 0; b < 256; ++b) {
+                    if (freq[b] > 0) {
+                        double p = static_cast<double>(freq[b]) / static_cast<double>(totalBytes);
+                        entropy -= p * std::log2(p);
+                    }
+                }
+            }
+        }
+        entry["entropy"] = std::round(entropy * 100.0) / 100.0;
+
+        sections.push_back(entry);
+    }
+
+    return {{"sections", sections}, {"count", sectionList.Count()}};
 }
 
 } // namespace MCP

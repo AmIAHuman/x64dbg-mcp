@@ -362,6 +362,7 @@ Configure in VS Code settings or MCP client config:
 - `module.get_main` - Get main module
 - `module.list_imports` - List imported functions used by a module
 - `module.list_strings` - List strings found in a module's memory
+- `module.get_sections` - Get PE section info with entropy
 
 ### Thread Operations
 - `thread.list` - List all threads

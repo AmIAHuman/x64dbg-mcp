@@ -45,6 +45,11 @@ public:
      * @brief module.list_strings - List strings found in a module's memory
      */
     static json ListStrings(const json& params);
+
+    /**
+     * @brief module.get_sections - Get PE section info for a module
+     */
+    static json GetSections(const json& params);
 };
 
 } // namespace MCP
