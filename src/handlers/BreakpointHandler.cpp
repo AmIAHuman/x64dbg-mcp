@@ -482,7 +482,7 @@ nlohmann::json BreakpointHandler::SetReturnOverride(const nlohmann::json& params
 
     // Set breakpoint if one doesn't already exist
     if (!manager.HasBreakpoint(address)) {
-        manager.SetBreakpoint(address, BreakpointType::Software);
+        manager.SetSoftwareBreakpoint(address);
     }
 
     // Build command string: step out, set return value, optionally resume

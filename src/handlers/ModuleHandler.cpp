@@ -487,16 +487,15 @@ json ModuleHandler::GetSections(const json& params) {
         // but we don't have direct access via the SDK. Read the PE header to get them.
         uint32_t characteristics = 0;
         // Walk PE header: DOS header -> NT headers -> section headers
-        uint32_t peOffset = 0;
-        if (Script::Memory::ReadDword(info.base + 0x3C, &peOffset)) {
+        uint32_t peOffset = Script::Memory::ReadDword(info.base + 0x3C);
+        if (peOffset != 0) {
             // Section headers start after optional header
             // NT signature (4) + FileHeader (20) + SizeOfOptionalHeader
-            uint16_t optionalHeaderSize = 0;
-            Script::Memory::ReadWord(info.base + peOffset + 4 + 16, &optionalHeaderSize);
+            uint16_t optionalHeaderSize = static_cast<uint16_t>(Script::Memory::ReadWord(info.base + peOffset + 4 + 16));
             duint sectionHeaderBase = info.base + peOffset + 4 + 20 + optionalHeaderSize;
             // Each section header is 40 bytes, characteristics at offset 36
             duint charAddr = sectionHeaderBase + (i * 40) + 36;
-            Script::Memory::ReadDword(charAddr, &characteristics);
+            characteristics = Script::Memory::ReadDword(charAddr);
         }
         entry["characteristics"] = StringUtils::FormatAddress(static_cast<uint64_t>(characteristics));
 
