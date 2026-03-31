@@ -228,6 +228,17 @@ void MCPToolRegistry::RegisterDefaultTools() {
         }
     });
 
+    RegisterTool({
+        "debug_hide_debugger",
+        "Configure ScyllaHide anti-anti-debug settings. Writes the ScyllaHide INI config so that when a debug session starts, ScyllaHide automatically applies the selected protections. Must be called BEFORE debug_load_binary. Requires ScyllaHide plugin installed. Categories: peb (BeingDebugged, NtGlobalFlag, HeapFlags, StartupInfo), ntquery (NtQueryInformationProcess, NtQuerySystemInformation, NtQueryObject), timing (GetTickCount, QueryPerformanceCounter, etc.), hardware (hide DR0-DR7 debug registers), window (hide debugger windows), handle (NtClose protection), thread (NtSetInformationThread, NtCreateThreadEx), misc (OutputDebugString, NtYieldExecution, KillAntiAttach).",
+        "debug.hide_debugger",
+        {
+            {"profile", "string", "Profile name written to INI (default 'MCP')", false, "MCP", nullptr},
+            {"techniques", "array", "Technique categories to enable (default: all). Options: peb, ntquery, timing, hardware, window, handle, thread, misc, all", false, nullptr, nullptr,
+             json{{"type", "string"}}}
+        }
+    });
+
     // 2. Register Tools
     RegisterTool({
         "register_get",
@@ -550,7 +561,19 @@ void MCPToolRegistry::RegisterDefaultTools() {
             {"address", "string", "Breakpoint address", true, nullptr, nullptr}
         }
     });
-    
+
+    RegisterTool({
+        "breakpoint_set_return_override",
+        "Set a breakpoint that automatically overrides the function return value. When hit, steps out of the function, sets RAX to the specified value, and optionally resumes execution.",
+        "breakpoint.set_return_override",
+        {
+            {"address", "string", "Breakpoint address (e.g. address of IsDebuggerPresent)", true, nullptr, nullptr},
+            {"return_value", "number", "Value to set RAX to after stepping out (default 0)", false, 0, nullptr},
+            {"action", "string", "Action after override: continue (auto-resume) or pause (break for inspection)", false, "continue",
+             json::array({"continue", "pause"})}
+        }
+    });
+
     // 10. Extended Symbol Tools
     RegisterTool({
         "symbol_list",

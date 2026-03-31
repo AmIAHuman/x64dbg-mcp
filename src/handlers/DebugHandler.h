@@ -67,6 +67,11 @@ public:
      */
     static json LoadBinary(const json& params);
 
+    /**
+     * @brief debug.hide_debugger - Configure ScyllaHide anti-anti-debug
+     */
+    static json HideDebugger(const json& params);
+
 private:
     static std::string StateToString(DebugState state);
 };

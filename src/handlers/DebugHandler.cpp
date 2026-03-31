@@ -7,6 +7,8 @@
 #include "bridgemain.h"
 #include <windows.h>
 #include <chrono>
+#include <fstream>
+#include <filesystem>
 
 namespace MCP {
 
@@ -23,6 +25,7 @@ void DebugHandler::RegisterMethods() {
     dispatcher.RegisterMethod("debug.restart", Restart);
     dispatcher.RegisterMethod("debug.stop", Stop);
     dispatcher.RegisterMethod("debug.load_binary", LoadBinary);
+    dispatcher.RegisterMethod("debug.hide_debugger", HideDebugger);
 
     Logger::Info("Registered debug.* methods");
 }
@@ -252,6 +255,146 @@ json DebugHandler::LoadBinary(const json& params) {
     }
 
     return result;
+}
+
+json DebugHandler::HideDebugger(const json& params) {
+    // Determine profile
+    std::string profile = "MCP";
+    if (params.contains("profile") && params["profile"].is_string()) {
+        profile = params["profile"].get<std::string>();
+    }
+
+    // Parse technique categories (default: all enabled)
+    bool enablePeb = true, enableNtquery = true, enableTiming = true;
+    bool enableHardware = true, enableWindow = true, enableHandle = true;
+    bool enableThread = true, enableMisc = true;
+
+    if (params.contains("techniques") && params["techniques"].is_array()) {
+        // If techniques array provided, start with all disabled
+        enablePeb = enableNtquery = enableTiming = false;
+        enableHardware = enableWindow = enableHandle = false;
+        enableThread = enableMisc = false;
+
+        for (const auto& t : params["techniques"]) {
+            if (!t.is_string()) continue;
+            std::string tech = t.get<std::string>();
+            if (tech == "peb" || tech == "heap") enablePeb = true;
+            else if (tech == "ntquery") enableNtquery = true;
+            else if (tech == "timing") enableTiming = true;
+            else if (tech == "hardware") enableHardware = true;
+            else if (tech == "window") enableWindow = true;
+            else if (tech == "handle") enableHandle = true;
+            else if (tech == "thread" || tech == "api_hooks") enableThread = true;
+            else if (tech == "misc") enableMisc = true;
+            else if (tech == "all") {
+                enablePeb = enableNtquery = enableTiming = true;
+                enableHardware = enableWindow = enableHandle = true;
+                enableThread = enableMisc = true;
+            }
+        }
+    }
+
+    auto b = [](bool v) -> std::string { return v ? "1" : "0"; };
+
+    // Build INI content
+    std::string ini;
+    ini += "[SETTINGS]\n";
+    ini += "CurrentProfile=" + profile + "\n";
+    ini += "[" + profile + "]\n";
+    ini += "DLLNormal=1\n";
+    ini += "DLLStealth=0\n";
+    ini += "DLLUnload=0\n";
+
+    // PEB
+    ini += "PebBeingDebugged=" + b(enablePeb) + "\n";
+    ini += "PebNtGlobalFlag=" + b(enablePeb) + "\n";
+    ini += "PebHeapFlags=" + b(enablePeb) + "\n";
+    ini += "PebStartupInfo=" + b(enablePeb) + "\n";
+    ini += "PebOsBuildNumber=" + b(enablePeb) + "\n";
+
+    // NtQuery
+    ini += "NtQueryInformationProcessHook=" + b(enableNtquery) + "\n";
+    ini += "NtQuerySystemInformationHook=" + b(enableNtquery) + "\n";
+    ini += "NtQueryObjectHook=" + b(enableNtquery) + "\n";
+    ini += "NtSetInformationProcessHook=" + b(enableNtquery) + "\n";
+
+    // Thread / API hooks
+    ini += "NtSetInformationThreadHook=" + b(enableThread) + "\n";
+    ini += "NtCreateThreadExHook=" + b(enableThread) + "\n";
+    ini += "PreventThreadCreation=0\n";
+
+    // Hardware / debug registers
+    ini += "NtGetContextThreadHook=" + b(enableHardware) + "\n";
+    ini += "NtSetContextThreadHook=" + b(enableHardware) + "\n";
+    ini += "KiUserExceptionDispatcherHook=" + b(enableHardware) + "\n";
+    ini += "NtContinueHook=" + b(enableHardware) + "\n";
+
+    // Timing
+    ini += "GetTickCountHook=" + b(enableTiming) + "\n";
+    ini += "GetTickCount64Hook=" + b(enableTiming) + "\n";
+    ini += "GetLocalTimeHook=" + b(enableTiming) + "\n";
+    ini += "GetSystemTimeHook=" + b(enableTiming) + "\n";
+    ini += "NtQuerySystemTimeHook=" + b(enableTiming) + "\n";
+    ini += "NtQueryPerformanceCounterHook=" + b(enableTiming) + "\n";
+
+    // Window detection
+    ini += "NtUserFindWindowExHook=" + b(enableWindow) + "\n";
+    ini += "NtUserBuildHwndListHook=" + b(enableWindow) + "\n";
+    ini += "NtUserQueryWindowHook=" + b(enableWindow) + "\n";
+    ini += "NtUserGetForegroundWindowHook=" + b(enableWindow) + "\n";
+
+    // Handle
+    ini += "NtCloseHook=" + b(enableHandle) + "\n";
+
+    // Misc
+    ini += "OutputDebugStringHook=" + b(enableMisc) + "\n";
+    ini += "NtYieldExecutionHook=" + b(enableMisc) + "\n";
+    ini += "NtSetDebugFilterStateHook=" + b(enableMisc) + "\n";
+    ini += "NtUserBlockInputHook=" + b(enableMisc) + "\n";
+    ini += "KillAntiAttach=" + b(enableMisc) + "\n";
+    ini += "RemoveDebugPrivileges=" + b(enableMisc) + "\n";
+
+    // Find ScyllaHide INI path (same directory as our plugin)
+    char modulePath[MAX_PATH] = {};
+    HMODULE hModule = nullptr;
+    GetModuleHandleExA(
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        (LPCSTR)&HideDebugger, &hModule);
+    GetModuleFileNameA(hModule, modulePath, MAX_PATH);
+
+    std::filesystem::path pluginDir = std::filesystem::path(modulePath).parent_path();
+    std::string iniPath = (pluginDir / "scylla_hide.ini").string();
+
+    // Write INI
+    std::ofstream file(iniPath);
+    if (!file.is_open()) {
+        return {
+            {"success", false},
+            {"error", "Failed to write ScyllaHide INI at: " + iniPath}
+        };
+    }
+    file << ini;
+    file.close();
+
+    Logger::Info("Wrote ScyllaHide config to: {}", iniPath);
+
+    // Build applied techniques list
+    json applied = json::array();
+    if (enablePeb) applied.push_back("peb");
+    if (enableNtquery) applied.push_back("ntquery");
+    if (enableTiming) applied.push_back("timing");
+    if (enableHardware) applied.push_back("hardware");
+    if (enableWindow) applied.push_back("window");
+    if (enableHandle) applied.push_back("handle");
+    if (enableThread) applied.push_back("thread");
+    if (enableMisc) applied.push_back("misc");
+
+    return {
+        {"success", true},
+        {"profile", profile},
+        {"ini_path", iniPath},
+        {"applied", applied}
+    };
 }
 
 std::string DebugHandler::StateToString(DebugState state) {
