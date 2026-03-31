@@ -4,6 +4,9 @@
 #include "../core/PermissionChecker.h"
 #include "../core/Exceptions.h"
 #include "../utils/StringUtils.h"
+#include "../core/Logger.h"
+#include "bridgemain.h"
+#include "_dbgfunctions.h"
 
 namespace MCP {
 
@@ -21,6 +24,7 @@ void BreakpointHandler::RegisterMethods() {
     dispatcher.RegisterMethod("breakpoint.set_condition", SetCondition);
     dispatcher.RegisterMethod("breakpoint.set_log", SetLog);
     dispatcher.RegisterMethod("breakpoint.reset_hitcount", ResetHitCount);
+    dispatcher.RegisterMethod("breakpoint.set_return_override", SetReturnOverride);
 }
 
 nlohmann::json BreakpointHandler::Set(const nlohmann::json& params) {
@@ -446,6 +450,79 @@ nlohmann::json BreakpointHandler::BreakpointInfoToJson(const BreakpointInfo& bp)
     }
     
     return json;
+}
+
+nlohmann::json BreakpointHandler::SetReturnOverride(const nlohmann::json& params) {
+    if (!PermissionChecker::Instance().IsBreakpointModificationAllowed()) {
+        throw PermissionDeniedException("Setting breakpoint requires write permission");
+    }
+
+    if (!params.contains("address")) {
+        throw InvalidParamsException("Missing required parameter: address");
+    }
+
+    std::string addressStr = params["address"].get<std::string>();
+    uint64_t address = StringUtils::ParseAddress(addressStr);
+
+    uint64_t returnValue = 0;
+    if (params.contains("return_value")) {
+        if (params["return_value"].is_number()) {
+            returnValue = params["return_value"].get<uint64_t>();
+        } else if (params["return_value"].is_string()) {
+            returnValue = StringUtils::ParseAddress(params["return_value"].get<std::string>());
+        }
+    }
+
+    std::string action = "continue";
+    if (params.contains("action") && params["action"].is_string()) {
+        action = params["action"].get<std::string>();
+    }
+
+    auto& manager = BreakpointManager::Instance();
+
+    // Set breakpoint if one doesn't already exist
+    if (!manager.HasBreakpoint(address)) {
+        manager.SetBreakpoint(address, BreakpointType::Software);
+    }
+
+    // Build command string: step out, set return value, optionally resume
+    std::string command = "rtr;rax=" + StringUtils::FormatAddress(returnValue);
+    if (action == "continue") {
+        command += ";run";
+    }
+
+    // Get BP reference and set command text
+    BP_REF bpRef;
+    memset(&bpRef, 0, sizeof(bpRef));
+
+    int bpType = DbgGetBpxTypeAt(static_cast<duint>(address));
+    BPXTYPE type = bp_none;
+    if (bpType & bp_normal) {
+        type = bp_normal;
+    } else if (bpType & bp_hardware) {
+        type = bp_hardware;
+    } else if (bpType & bp_memory) {
+        type = bp_memory;
+    }
+
+    if (!DbgFunctions()->BpRefVa(&bpRef, type, static_cast<duint>(address))) {
+        throw MCPException("Failed to get breakpoint reference", -32000);
+    }
+
+    if (!DbgFunctions()->BpSetFieldText(&bpRef, bpf_commandtext, command.c_str())) {
+        throw MCPException("Failed to set breakpoint command", -32000);
+    }
+
+    Logger::Info("Set return override at 0x{:X}: rax={}, action={}",
+        address, StringUtils::FormatAddress(returnValue), action);
+
+    return {
+        {"success", true},
+        {"address", StringUtils::FormatAddress(address)},
+        {"return_value", StringUtils::FormatAddress(returnValue)},
+        {"action", action},
+        {"command", command}
+    };
 }
 
 } // namespace MCP

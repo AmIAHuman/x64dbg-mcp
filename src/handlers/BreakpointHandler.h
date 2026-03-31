@@ -111,7 +111,14 @@ private:
      * @return { "success": true, "hit_count": 0 }
      */
     static nlohmann::json ResetHitCount(const nlohmann::json& params);
-    
+
+    /**
+     * @brief Set breakpoint with automatic return value override
+     * @param params { "address": "0x401000", "return_value": 0, "action": "continue"|"pause" }
+     * @return { "success": true }
+     */
+    static nlohmann::json SetReturnOverride(const nlohmann::json& params);
+
     // 辅助方法
     static nlohmann::json BreakpointInfoToJson(const struct BreakpointInfo& bp);
 };
