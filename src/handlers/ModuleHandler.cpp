@@ -486,6 +486,7 @@ json ModuleHandler::GetSections(const json& params) {
         // Section characteristics are at offset 36 (0x24) in the IMAGE_SECTION_HEADER
         // but we don't have direct access via the SDK. Read the PE header to get them.
         uint32_t characteristics = 0;
+        uint32_t rawSize = 0;
         // Walk PE header: DOS header -> NT headers -> section headers
         uint32_t peOffset = Script::Memory::ReadDword(info.base + 0x3C);
         if (peOffset != 0) {
@@ -493,10 +494,12 @@ json ModuleHandler::GetSections(const json& params) {
             // NT signature (4) + FileHeader (20) + SizeOfOptionalHeader
             uint16_t optionalHeaderSize = static_cast<uint16_t>(Script::Memory::ReadWord(info.base + peOffset + 4 + 16));
             duint sectionHeaderBase = info.base + peOffset + 4 + 20 + optionalHeaderSize;
-            // Each section header is 40 bytes, characteristics at offset 36
-            duint charAddr = sectionHeaderBase + (i * 40) + 36;
-            characteristics = Script::Memory::ReadDword(charAddr);
+            duint secHeader = sectionHeaderBase + (i * 40);
+            // IMAGE_SECTION_HEADER: Name(8) + VirtualSize(4) + VirtualAddress(4) + SizeOfRawData(4, offset 16) + ... + Characteristics(4, offset 36)
+            rawSize = Script::Memory::ReadDword(secHeader + 16);
+            characteristics = Script::Memory::ReadDword(secHeader + 36);
         }
+        entry["raw_size"] = static_cast<uint64_t>(rawSize);
         entry["characteristics"] = StringUtils::FormatAddress(static_cast<uint64_t>(characteristics));
 
         // Calculate Shannon entropy
@@ -525,7 +528,7 @@ json ModuleHandler::GetSections(const json& params) {
                 }
             }
         }
-        entry["entropy"] = std::round(entropy * 100.0) / 100.0;
+        entry["entropy"] = std::round(entropy * 10000.0) / 10000.0;
 
         sections.push_back(entry);
     }
