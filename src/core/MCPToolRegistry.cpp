@@ -770,13 +770,14 @@ void MCPToolRegistry::RegisterDefaultTools() {
     
     RegisterTool({
         "dump_fix_imports",
-        "Fix import address table (IAT)",
+        "Reconstruct import address table (IAT) from live process memory. "
+        "Reads resolved API pointers from the debuggee's memory, resolves them "
+        "to DLL+function names, and writes a new import table into the PE file on disk.",
         "dump.fix_imports",
         {
-            {"module_base", "string", "Module base address", true, nullptr, nullptr},
-            {"buffer", "array", "PE file data as byte array", true, nullptr, nullptr,
-             json{{"type", "integer"}}},
-            {"use_scylla", "boolean", "Use Scylla algorithm", false, false, nullptr}
+            {"file_path", "string", "Path to the dumped PE file on disk", true, nullptr, nullptr},
+            {"module_base", "string", "Module base address in the debugged process", true, nullptr, nullptr},
+            {"oep", "string", "Original Entry Point RVA to set (optional)", false, nullptr, nullptr}
         }
     });
     

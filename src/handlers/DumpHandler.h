@@ -114,15 +114,17 @@ private:
     static nlohmann::json GetDumpableRegions(const nlohmann::json& params);
     
     /**
-     * @brief 修复导入表
+     * @brief Reconstruct import table from live process IAT
      * @param params {
-     *   "module_base": "0x400000",
-     *   "buffer": [0x4D, 0x5A, ...],  // PE文件数据
-     *   "use_scylla": false            // 使用Scylla算法
+     *   "file_path": "C:\\dump\\unpacked.exe",    // Path to dumped PE file
+     *   "module_base": "0x400000",                // Module base in debuggee
+     *   "oep": "0x1000"                           // Optional: OEP RVA to set
      * }
      * @return {
      *   "success": true,
-     *   "fixed_buffer": [0x4D, 0x5A, ...]
+     *   "import_count": 142,
+     *   "dll_count": 12,
+     *   "file_path": "C:\\dump\\unpacked.exe"
      * }
      */
     static nlohmann::json FixImports(const nlohmann::json& params);

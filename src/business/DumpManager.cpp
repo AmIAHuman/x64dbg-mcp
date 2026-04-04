@@ -13,10 +13,12 @@
 #include <cstring>
 #include <filesystem>
 #include <limits>
+#include <unordered_map>
 #include <windows.h>
 
 #ifdef XDBG_SDK_AVAILABLE
-#include "_scriptapi_module.h"  // For Script::Module::EntryFromAddr
+#include "_scriptapi_module.h"
+#include "_scriptapi_memory.h"
 #include <bridgelist.h>
 #endif
 
@@ -1488,6 +1490,727 @@ bool DumpManager::ScyllaRebuildImports(uint64_t moduleBase, std::vector<uint8_t>
         Logger::Error("Scylla import rebuild failed: {}", e.what());
         return false;
     }
+}
+
+// ========== IAT Reconstruction ==========
+
+namespace {
+
+// Align a value up to the given alignment
+inline uint32_t AlignUp(uint32_t value, uint32_t alignment) {
+    if (alignment == 0) return value;
+    return (value + alignment - 1) & ~(alignment - 1);
+}
+
+#ifdef XDBG_SDK_AVAILABLE
+// Resolve a single IAT pointer from live process memory to DLL+function name.
+// Returns false if the pointer is zero (separator) or cannot be resolved.
+bool ResolveIATPointer(duint ptrValue, std::string& outDllName, std::string& outFuncName,
+                       uint16_t& outOrdinal, bool& outByOrdinal) {
+    if (ptrValue == 0) {
+        return false;
+    }
+
+    outByOrdinal = false;
+    outOrdinal = 0;
+
+    // Try DbgGetLabelAt first — returns "module.FunctionName"
+    char label[MAX_LABEL_SIZE] = {};
+    if (DbgGetLabelAt(ptrValue, SEG_DEFAULT, label) && label[0] != '\0') {
+        std::string labelStr(label);
+        size_t dotPos = labelStr.find('.');
+        if (dotPos != std::string::npos && dotPos > 0 && dotPos < labelStr.size() - 1) {
+            outDllName = labelStr.substr(0, dotPos);
+            outFuncName = labelStr.substr(dotPos + 1);
+
+            // Strip leading '#' if ordinal label like "#123"
+            if (!outFuncName.empty() && outFuncName[0] == '#') {
+                try {
+                    outOrdinal = static_cast<uint16_t>(std::stoul(outFuncName.substr(1)));
+                    outByOrdinal = true;
+                } catch (...) {}
+            }
+
+            // Ensure DLL name has .dll extension
+            std::string dllLower = ToLowerAscii(outDllName);
+            if (dllLower.find(".dll") == std::string::npos &&
+                dllLower.find(".drv") == std::string::npos &&
+                dllLower.find(".sys") == std::string::npos) {
+                outDllName += ".dll";
+            }
+            return true;
+        }
+    }
+
+    // Fallback: try to get module name + use the label as function name
+    char modName[MAX_MODULE_SIZE] = {};
+    if (Script::Module::NameFromAddr(ptrValue, modName) && modName[0] != '\0') {
+        outDllName = std::string(modName);
+        std::string dllLower = ToLowerAscii(outDllName);
+        if (dllLower.find(".dll") == std::string::npos &&
+            dllLower.find(".drv") == std::string::npos &&
+            dllLower.find(".sys") == std::string::npos) {
+            outDllName += ".dll";
+        }
+
+        // Try to get function name from symbol info
+        SYMBOLINFOCPP symInfo;
+        if (DbgGetSymbolInfoAt(ptrValue, &symInfo)) {
+            const char* name = symInfo.undecoratedSymbol ? symInfo.undecoratedSymbol :
+                               symInfo.decoratedSymbol;
+            if (name && name[0] != '\0') {
+                outFuncName = name;
+                // Remove "module." prefix if present
+                std::string prefix = std::string(modName) + ".";
+                if (outFuncName.substr(0, prefix.size()) == prefix) {
+                    outFuncName = outFuncName.substr(prefix.size());
+                }
+                if (symInfo.ordinal != 0) {
+                    outOrdinal = static_cast<uint16_t>(symInfo.ordinal);
+                }
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+// Scan a contiguous IAT region and group resolved imports by DLL.
+// iatRva: RVA of the IAT start in the PE
+// iatSize: size of the IAT region in bytes
+// moduleBase: base address of the module in live process
+void ScanIATRegion(uint64_t moduleBase, uint32_t iatRva, uint32_t iatSize,
+                   std::vector<DumpManager::ImportGroup>& outGroups) {
+    const uint32_t ptrSize = sizeof(duint);
+    const uint32_t slotCount = iatSize / ptrSize;
+
+    // Map from DLL name (lowercase) to group index
+    std::unordered_map<std::string, size_t> dllGroupMap;
+
+    uint32_t unresolved = 0;
+    for (uint32_t i = 0; i < slotCount; ++i) {
+        uint32_t slotRva = iatRva + i * ptrSize;
+        duint ptrValue = Script::Memory::ReadPtr(moduleBase + slotRva);
+
+        if (ptrValue == 0) {
+            continue;  // NULL separator between DLL groups
+        }
+
+        std::string dllName, funcName;
+        uint16_t ordinal = 0;
+        bool byOrdinal = false;
+
+        if (!ResolveIATPointer(ptrValue, dllName, funcName, ordinal, byOrdinal)) {
+            ++unresolved;
+            continue;
+        }
+
+        std::string dllKey = ToLowerAscii(dllName);
+        size_t groupIdx;
+        auto it = dllGroupMap.find(dllKey);
+        if (it == dllGroupMap.end()) {
+            groupIdx = outGroups.size();
+            dllGroupMap[dllKey] = groupIdx;
+            DumpManager::ImportGroup group;
+            group.dllName = dllName;
+            outGroups.push_back(std::move(group));
+        } else {
+            groupIdx = it->second;
+        }
+
+        DumpManager::ResolvedImport imp;
+        imp.dllName = dllName;
+        imp.functionName = funcName;
+        imp.ordinal = ordinal;
+        imp.importByOrdinal = byOrdinal;
+
+        outGroups[groupIdx].functions.push_back(std::move(imp));
+        outGroups[groupIdx].iatSlotRvas.push_back(slotRva);
+    }
+
+    if (unresolved > 0) {
+        Logger::Warning("IAT scan: {} slots could not be resolved", unresolved);
+    }
+}
+#endif // XDBG_SDK_AVAILABLE
+
+} // anonymous namespace
+
+bool DumpManager::ScanAndResolveIAT(
+    uint64_t moduleBase,
+    const std::vector<uint8_t>& peBuffer,
+    std::vector<ImportGroup>& outGroups)
+{
+#ifndef XDBG_SDK_AVAILABLE
+    Logger::Error("ScanAndResolveIAT requires x64dbg SDK");
+    return false;
+#else
+    auto* dosHeader = reinterpret_cast<const IMAGE_DOS_HEADER*>(peBuffer.data());
+    auto* ntHeaders = reinterpret_cast<const IMAGE_NT_HEADERS*>(
+        peBuffer.data() + dosHeader->e_lfanew);
+    const auto& dataDir = ntHeaders->OptionalHeader.DataDirectory;
+
+    // Strategy 1: Use IAT DataDirectory
+    const auto& iatDir = dataDir[IMAGE_DIRECTORY_ENTRY_IAT];
+    if (iatDir.VirtualAddress != 0 && iatDir.Size >= sizeof(duint)) {
+        Logger::Info("Scanning IAT via DataDirectory[IAT]: RVA={}, Size={}",
+                     StringUtils::FormatAddress(iatDir.VirtualAddress), iatDir.Size);
+        ScanIATRegion(moduleBase, iatDir.VirtualAddress, iatDir.Size, outGroups);
+        if (!outGroups.empty()) {
+            return true;
+        }
+        Logger::Warning("IAT DataDirectory scan yielded no results, trying import descriptors");
+        outGroups.clear();
+    }
+
+    // Strategy 2: Walk import descriptors to find IAT arrays
+    const auto& importDir = dataDir[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (importDir.VirtualAddress != 0 && importDir.Size >= sizeof(IMAGE_IMPORT_DESCRIPTOR)) {
+        Logger::Info("Scanning IAT via import descriptors: RVA={}",
+                     StringUtils::FormatAddress(importDir.VirtualAddress));
+
+        const uint32_t ptrSize = sizeof(duint);
+        std::unordered_map<std::string, size_t> dllGroupMap;
+
+        // Read import descriptors from live process memory (they may differ from PE on disk)
+        for (uint32_t descOffset = 0; ; descOffset += sizeof(IMAGE_IMPORT_DESCRIPTOR)) {
+            uint64_t descAddr = moduleBase + importDir.VirtualAddress + descOffset;
+
+            IMAGE_IMPORT_DESCRIPTOR desc = {};
+            if (!Script::Memory::Read(descAddr, &desc, sizeof(desc), nullptr)) {
+                break;
+            }
+
+            // Null terminator
+            if (desc.FirstThunk == 0 && desc.OriginalFirstThunk == 0) {
+                break;
+            }
+
+            if (desc.FirstThunk == 0) {
+                continue;
+            }
+
+            // Walk the IAT (FirstThunk) array
+            for (uint32_t entryIdx = 0; ; ++entryIdx) {
+                uint32_t slotRva = desc.FirstThunk + entryIdx * ptrSize;
+                duint ptrValue = Script::Memory::ReadPtr(moduleBase + slotRva);
+
+                if (ptrValue == 0) {
+                    break;  // End of this DLL's IAT entries
+                }
+
+                std::string dllName, funcName;
+                uint16_t ordinal = 0;
+                bool byOrdinal = false;
+
+                if (!ResolveIATPointer(ptrValue, dllName, funcName, ordinal, byOrdinal)) {
+                    continue;
+                }
+
+                std::string dllKey = ToLowerAscii(dllName);
+                size_t groupIdx;
+                auto it = dllGroupMap.find(dllKey);
+                if (it == dllGroupMap.end()) {
+                    groupIdx = outGroups.size();
+                    dllGroupMap[dllKey] = groupIdx;
+                    ImportGroup group;
+                    group.dllName = dllName;
+                    outGroups.push_back(std::move(group));
+                } else {
+                    groupIdx = it->second;
+                }
+
+                ResolvedImport imp;
+                imp.dllName = dllName;
+                imp.functionName = funcName;
+                imp.ordinal = ordinal;
+                imp.importByOrdinal = byOrdinal;
+
+                outGroups[groupIdx].functions.push_back(std::move(imp));
+                outGroups[groupIdx].iatSlotRvas.push_back(slotRva);
+            }
+        }
+
+        if (!outGroups.empty()) {
+            return true;
+        }
+        Logger::Warning("Import descriptor scan yielded no results, trying heuristic");
+        outGroups.clear();
+    }
+
+    // Strategy 3: Heuristic scan — look for pointer-sized runs of valid API addresses
+    // in writable/readable non-executable sections
+    Logger::Info("Attempting heuristic IAT scan");
+    const auto* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(
+        reinterpret_cast<const uint8_t*>(ntHeaders) + sizeof(IMAGE_NT_HEADERS));
+    const WORD sectionCount = ntHeaders->FileHeader.NumberOfSections;
+    const uint32_t ptrSize = sizeof(duint);
+
+    std::unordered_map<std::string, size_t> dllGroupMap;
+
+    for (WORD secIdx = 0; secIdx < sectionCount; ++secIdx) {
+        const auto& sec = sections[secIdx];
+
+        // Look in readable, non-executable sections with data
+        bool readable = (sec.Characteristics & IMAGE_SCN_MEM_READ) != 0;
+        bool executable = (sec.Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
+        uint32_t secSpan = std::max(sec.Misc.VirtualSize, sec.SizeOfRawData);
+        if (!readable || executable || secSpan < ptrSize * 3) {
+            continue;
+        }
+
+        // Scan for consecutive resolved pointers (minimum run of 3)
+        uint32_t consecutiveResolved = 0;
+        std::vector<std::tuple<uint32_t, std::string, std::string, uint16_t, bool>> pendingSlots;
+
+        for (uint32_t offset = 0; offset + ptrSize <= secSpan; offset += ptrSize) {
+            uint32_t slotRva = sec.VirtualAddress + offset;
+            duint ptrValue = Script::Memory::ReadPtr(moduleBase + slotRva);
+
+            if (ptrValue == 0) {
+                // Flush pending if we had a good run
+                if (consecutiveResolved >= 3) {
+                    for (auto& [sRva, dll, func, ord, byOrd] : pendingSlots) {
+                        std::string dllKey = ToLowerAscii(dll);
+                        size_t groupIdx;
+                        auto it = dllGroupMap.find(dllKey);
+                        if (it == dllGroupMap.end()) {
+                            groupIdx = outGroups.size();
+                            dllGroupMap[dllKey] = groupIdx;
+                            ImportGroup group;
+                            group.dllName = dll;
+                            outGroups.push_back(std::move(group));
+                        } else {
+                            groupIdx = it->second;
+                        }
+
+                        ResolvedImport imp;
+                        imp.dllName = dll;
+                        imp.functionName = func;
+                        imp.ordinal = ord;
+                        imp.importByOrdinal = byOrd;
+                        outGroups[groupIdx].functions.push_back(std::move(imp));
+                        outGroups[groupIdx].iatSlotRvas.push_back(sRva);
+                    }
+                }
+                consecutiveResolved = 0;
+                pendingSlots.clear();
+                continue;
+            }
+
+            std::string dllName, funcName;
+            uint16_t ordinal = 0;
+            bool byOrdinal = false;
+            if (ResolveIATPointer(ptrValue, dllName, funcName, ordinal, byOrdinal)) {
+                ++consecutiveResolved;
+                pendingSlots.emplace_back(slotRva, dllName, funcName, ordinal, byOrdinal);
+            } else {
+                // Break the run
+                if (consecutiveResolved >= 3) {
+                    for (auto& [sRva, dll, func, ord, byOrd] : pendingSlots) {
+                        std::string dllKey = ToLowerAscii(dll);
+                        size_t groupIdx;
+                        auto it = dllGroupMap.find(dllKey);
+                        if (it == dllGroupMap.end()) {
+                            groupIdx = outGroups.size();
+                            dllGroupMap[dllKey] = groupIdx;
+                            ImportGroup group;
+                            group.dllName = dll;
+                            outGroups.push_back(std::move(group));
+                        } else {
+                            groupIdx = it->second;
+                        }
+
+                        ResolvedImport imp;
+                        imp.dllName = dll;
+                        imp.functionName = func;
+                        imp.ordinal = ord;
+                        imp.importByOrdinal = byOrd;
+                        outGroups[groupIdx].functions.push_back(std::move(imp));
+                        outGroups[groupIdx].iatSlotRvas.push_back(sRva);
+                    }
+                }
+                consecutiveResolved = 0;
+                pendingSlots.clear();
+            }
+        }
+
+        // Flush final run in section
+        if (consecutiveResolved >= 3) {
+            for (auto& [sRva, dll, func, ord, byOrd] : pendingSlots) {
+                std::string dllKey = ToLowerAscii(dll);
+                size_t groupIdx;
+                auto it = dllGroupMap.find(dllKey);
+                if (it == dllGroupMap.end()) {
+                    groupIdx = outGroups.size();
+                    dllGroupMap[dllKey] = groupIdx;
+                    ImportGroup group;
+                    group.dllName = dll;
+                    outGroups.push_back(std::move(group));
+                } else {
+                    groupIdx = it->second;
+                }
+
+                ResolvedImport imp;
+                imp.dllName = dll;
+                imp.functionName = func;
+                imp.ordinal = ord;
+                imp.importByOrdinal = byOrd;
+                outGroups[groupIdx].functions.push_back(std::move(imp));
+                outGroups[groupIdx].iatSlotRvas.push_back(sRva);
+            }
+        }
+    }
+
+    return !outGroups.empty();
+#endif
+}
+
+bool DumpManager::BuildAndWriteImportSection(
+    std::vector<uint8_t>& peBuffer,
+    const std::vector<ImportGroup>& groups,
+    uint32_t sectionAlignment,
+    uint32_t fileAlignment)
+{
+    if (groups.empty()) return false;
+
+    auto* dosHeader = reinterpret_cast<IMAGE_DOS_HEADER*>(peBuffer.data());
+    auto* ntHeaders = reinterpret_cast<IMAGE_NT_HEADERS*>(
+        peBuffer.data() + dosHeader->e_lfanew);
+
+    const WORD oldSectionCount = ntHeaders->FileHeader.NumberOfSections;
+    auto* sections = reinterpret_cast<IMAGE_SECTION_HEADER*>(
+        reinterpret_cast<uint8_t*>(ntHeaders) + sizeof(IMAGE_NT_HEADERS));
+
+    // Check if there's space for one more section header
+    const size_t sectionsEnd = static_cast<size_t>(dosHeader->e_lfanew) + sizeof(IMAGE_NT_HEADERS)
+        + (oldSectionCount + 1) * sizeof(IMAGE_SECTION_HEADER);
+    uint32_t firstSectionRawData = 0;
+    for (WORD i = 0; i < oldSectionCount; ++i) {
+        if (sections[i].PointerToRawData != 0) {
+            if (firstSectionRawData == 0 || sections[i].PointerToRawData < firstSectionRawData) {
+                firstSectionRawData = sections[i].PointerToRawData;
+            }
+        }
+    }
+    if (firstSectionRawData != 0 && sectionsEnd > firstSectionRawData) {
+        Logger::Error("No space in PE header for additional section header");
+        return false;
+    }
+
+    const uint32_t ptrSize = sizeof(duint);
+    const size_t dllCount = groups.size();
+
+    // Calculate sizes for each component
+    // 1. Import descriptors: (dllCount + 1) * sizeof(IMAGE_IMPORT_DESCRIPTOR)
+    const uint32_t descriptorsSize = static_cast<uint32_t>((dllCount + 1) * sizeof(IMAGE_IMPORT_DESCRIPTOR));
+
+    // 2. INT (OriginalFirstThunk) arrays: for each DLL, (funcCount + 1) * ptrSize
+    uint32_t intArraysSize = 0;
+    for (const auto& group : groups) {
+        intArraysSize += static_cast<uint32_t>((group.functions.size() + 1) * ptrSize);
+    }
+
+    // 3. IMAGE_IMPORT_BY_NAME structs: for each function, 2-byte hint + name + null + align
+    uint32_t nameEntriesSize = 0;
+    for (const auto& group : groups) {
+        for (const auto& func : group.functions) {
+            if (!func.importByOrdinal) {
+                // 2 bytes hint + function name + null byte, aligned to 2
+                uint32_t entrySize = 2 + static_cast<uint32_t>(func.functionName.size()) + 1;
+                entrySize = (entrySize + 1) & ~1u;  // align to 2
+                nameEntriesSize += entrySize;
+            }
+        }
+    }
+
+    // 4. DLL name strings
+    uint32_t dllNamesSize = 0;
+    for (const auto& group : groups) {
+        dllNamesSize += static_cast<uint32_t>(group.dllName.size()) + 1;
+    }
+
+    const uint32_t totalDataSize = descriptorsSize + intArraysSize + nameEntriesSize + dllNamesSize;
+    const uint32_t alignedDataSize = AlignUp(totalDataSize, fileAlignment);
+
+    // Determine new section RVA
+    uint32_t lastSectionEnd = 0;
+    for (WORD i = 0; i < oldSectionCount; ++i) {
+        uint32_t secEnd = sections[i].VirtualAddress +
+            AlignUp(std::max(sections[i].Misc.VirtualSize, sections[i].SizeOfRawData), sectionAlignment);
+        if (secEnd > lastSectionEnd) {
+            lastSectionEnd = secEnd;
+        }
+    }
+    const uint32_t newSectionRva = AlignUp(lastSectionEnd, sectionAlignment);
+    const uint32_t newSectionFileOffset = static_cast<uint32_t>(peBuffer.size());
+
+    // Resize buffer to accommodate new section
+    peBuffer.resize(peBuffer.size() + alignedDataSize, 0);
+
+    // Re-acquire pointers after resize
+    dosHeader = reinterpret_cast<IMAGE_DOS_HEADER*>(peBuffer.data());
+    ntHeaders = reinterpret_cast<IMAGE_NT_HEADERS*>(peBuffer.data() + dosHeader->e_lfanew);
+    sections = reinterpret_cast<IMAGE_SECTION_HEADER*>(
+        reinterpret_cast<uint8_t*>(ntHeaders) + sizeof(IMAGE_NT_HEADERS));
+
+    uint8_t* sectionData = peBuffer.data() + newSectionFileOffset;
+
+    // Layout within the new section:
+    // [import descriptors][INT arrays][name entries][DLL name strings]
+    uint32_t curOffset = 0;
+
+    // --- Write import descriptors ---
+    const uint32_t descriptorsOffset = curOffset;
+    curOffset += descriptorsSize;
+
+    // --- Write INT arrays ---
+    const uint32_t intArraysOffset = curOffset;
+    // We'll fill these in per-DLL below
+    curOffset += intArraysSize;
+
+    // --- Write name entries ---
+    const uint32_t nameEntriesOffset = curOffset;
+    curOffset += nameEntriesSize;
+
+    // --- Write DLL name strings ---
+    const uint32_t dllNamesOffset = curOffset;
+
+    // Now fill in the data
+    uint32_t currentIntOffset = intArraysOffset;
+    uint32_t currentNameOffset = nameEntriesOffset;
+    uint32_t currentDllNameOffset = dllNamesOffset;
+
+    for (size_t dllIdx = 0; dllIdx < dllCount; ++dllIdx) {
+        const auto& group = groups[dllIdx];
+
+        // Write DLL name string
+        uint32_t dllNameRva = newSectionRva + currentDllNameOffset;
+        std::memcpy(sectionData + currentDllNameOffset, group.dllName.c_str(),
+                     group.dllName.size() + 1);
+        currentDllNameOffset += static_cast<uint32_t>(group.dllName.size()) + 1;
+
+        // INT array RVA for this DLL
+        uint32_t intArrayRva = newSectionRva + currentIntOffset;
+
+        // IAT FirstThunk RVA — use the first IAT slot's RVA from the original PE
+        uint32_t iatFirstThunkRva = 0;
+        if (!group.iatSlotRvas.empty()) {
+            iatFirstThunkRva = group.iatSlotRvas[0];
+        }
+
+        // Fill import descriptor
+        auto* desc = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(
+            sectionData + descriptorsOffset + dllIdx * sizeof(IMAGE_IMPORT_DESCRIPTOR));
+        desc->OriginalFirstThunk = intArrayRva;
+        desc->TimeDateStamp = 0;
+        desc->ForwarderChain = 0;
+        desc->Name = dllNameRva;
+        desc->FirstThunk = iatFirstThunkRva;
+
+        // Write INT entries and patch IAT slots
+        for (size_t funcIdx = 0; funcIdx < group.functions.size(); ++funcIdx) {
+            const auto& func = group.functions[funcIdx];
+            duint thunkValue = 0;
+
+            if (func.importByOrdinal) {
+                // Ordinal import: set high bit + ordinal
+#ifdef XDBG_ARCH_X64
+                thunkValue = IMAGE_ORDINAL_FLAG64 | func.ordinal;
+#else
+                thunkValue = IMAGE_ORDINAL_FLAG32 | func.ordinal;
+#endif
+            } else {
+                // Name import: write IMAGE_IMPORT_BY_NAME, thunk points to it
+                uint32_t nameEntryRva = newSectionRva + currentNameOffset;
+
+                // Write hint (ordinal as hint, 0 if unknown)
+                uint16_t hint = func.ordinal;
+                std::memcpy(sectionData + currentNameOffset, &hint, sizeof(hint));
+                currentNameOffset += 2;
+
+                // Write function name + null
+                std::memcpy(sectionData + currentNameOffset, func.functionName.c_str(),
+                             func.functionName.size() + 1);
+                currentNameOffset += static_cast<uint32_t>(func.functionName.size()) + 1;
+
+                // Align to 2
+                if (currentNameOffset & 1) {
+                    sectionData[currentNameOffset] = 0;
+                    ++currentNameOffset;
+                }
+
+                thunkValue = static_cast<duint>(nameEntryRva);
+            }
+
+            // Write INT entry
+            std::memcpy(sectionData + currentIntOffset, &thunkValue, ptrSize);
+            currentIntOffset += ptrSize;
+
+            // Patch IAT slot in the PE buffer
+            if (funcIdx < group.iatSlotRvas.size()) {
+                uint32_t iatSlotFileOffset = 0;
+                uint32_t iatSlotRva = group.iatSlotRvas[funcIdx];
+
+                // Find the file offset for this IAT RVA
+                for (WORD secIdx = 0; secIdx < oldSectionCount; ++secIdx) {
+                    uint32_t secRva = sections[secIdx].VirtualAddress;
+                    uint32_t secSpan = std::max(sections[secIdx].Misc.VirtualSize,
+                                                sections[secIdx].SizeOfRawData);
+                    if (iatSlotRva >= secRva && iatSlotRva < secRva + secSpan) {
+                        iatSlotFileOffset = sections[secIdx].PointerToRawData +
+                                            (iatSlotRva - secRva);
+                        break;
+                    }
+                }
+
+                if (iatSlotFileOffset != 0 && iatSlotFileOffset + ptrSize <= peBuffer.size()) {
+                    std::memcpy(peBuffer.data() + iatSlotFileOffset, &thunkValue, ptrSize);
+                }
+            }
+        }
+
+        // Write INT null terminator
+        duint nullThunk = 0;
+        std::memcpy(sectionData + currentIntOffset, &nullThunk, ptrSize);
+        currentIntOffset += ptrSize;
+    }
+
+    // Null terminator import descriptor (already zeroed from resize)
+
+    // Add new section header
+    auto* newSection = &sections[oldSectionCount];
+    std::memset(newSection, 0, sizeof(IMAGE_SECTION_HEADER));
+    std::memcpy(newSection->Name, ".idata2", 7);
+    newSection->Misc.VirtualSize = totalDataSize;
+    newSection->VirtualAddress = newSectionRva;
+    newSection->SizeOfRawData = alignedDataSize;
+    newSection->PointerToRawData = newSectionFileOffset;
+    newSection->Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA;
+
+    // Update PE headers
+    ntHeaders->FileHeader.NumberOfSections = oldSectionCount + 1;
+    ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress =
+        newSectionRva + descriptorsOffset;
+    ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size =
+        static_cast<uint32_t>(dllCount * sizeof(IMAGE_IMPORT_DESCRIPTOR));
+    ntHeaders->OptionalHeader.SizeOfImage =
+        AlignUp(newSectionRva + totalDataSize, sectionAlignment);
+
+    Logger::Info("Built new .idata2 section: RVA={}, size={}, {} DLLs",
+                 StringUtils::FormatAddress(newSectionRva), totalDataSize, dllCount);
+    return true;
+}
+
+FixImportsResult DumpManager::FixImportsFromFile(
+    const std::string& filePath,
+    uint64_t moduleBase,
+    std::optional<uint32_t> oepRva)
+{
+    FixImportsResult result;
+    result.filePath = filePath;
+
+    try {
+        // 1. Read PE from disk
+        auto fsPath = ToFilesystemPath(filePath);
+        std::ifstream input(fsPath, std::ios::binary | std::ios::ate);
+        if (!input) {
+            result.error = "Failed to open PE file: " + filePath;
+            Logger::Error("{}", result.error);
+            return result;
+        }
+        auto fileSize = input.tellg();
+        if (fileSize <= 0) {
+            result.error = "PE file is empty: " + filePath;
+            Logger::Error("{}", result.error);
+            return result;
+        }
+        input.seekg(0, std::ios::beg);
+        std::vector<uint8_t> buffer(static_cast<size_t>(fileSize));
+        if (!input.read(reinterpret_cast<char*>(buffer.data()), fileSize)) {
+            result.error = "Failed to read PE file: " + filePath;
+            Logger::Error("{}", result.error);
+            return result;
+        }
+        input.close();
+
+        // 2. Validate PE
+        if (!ValidatePEHeader(buffer)) {
+            result.error = "Invalid PE header in dump file: " + filePath;
+            Logger::Error("{}", result.error);
+            return result;
+        }
+
+        // 3. Parse PE headers for alignment values
+        auto* dosHeader = reinterpret_cast<IMAGE_DOS_HEADER*>(buffer.data());
+        auto* ntHeaders = reinterpret_cast<IMAGE_NT_HEADERS*>(
+            buffer.data() + dosHeader->e_lfanew);
+        uint32_t sectionAlignment = ntHeaders->OptionalHeader.SectionAlignment;
+        uint32_t fileAlignment = ntHeaders->OptionalHeader.FileAlignment;
+        if (sectionAlignment == 0) sectionAlignment = 0x1000;
+        if (fileAlignment == 0) fileAlignment = 0x200;
+
+        // 4. Optionally set OEP
+        if (oepRva.has_value()) {
+            ntHeaders->OptionalHeader.AddressOfEntryPoint = oepRva.value();
+            Logger::Info("Set OEP to RVA: {}", StringUtils::FormatAddress(oepRva.value()));
+        }
+
+        // 5. Scan IAT from live process memory
+        std::vector<ImportGroup> importGroups;
+        if (!ScanAndResolveIAT(moduleBase, buffer, importGroups)) {
+            result.error = "Failed to scan and resolve IAT from live process memory";
+            Logger::Error("{}", result.error);
+            return result;
+        }
+
+        // 6. Count results
+        int totalImports = 0;
+        for (const auto& group : importGroups) {
+            totalImports += static_cast<int>(group.functions.size());
+        }
+        if (totalImports == 0) {
+            result.error = "No imports resolved from IAT scan";
+            Logger::Error("{}", result.error);
+            return result;
+        }
+
+        Logger::Info("Resolved {} imports from {} DLLs", totalImports, importGroups.size());
+
+        // 7. Build new import section
+        if (!BuildAndWriteImportSection(buffer, importGroups, sectionAlignment, fileAlignment)) {
+            result.error = "Failed to build new import section in PE";
+            Logger::Error("{}", result.error);
+            return result;
+        }
+
+        // 8. Write fixed PE back to disk
+        std::ofstream output(fsPath, std::ios::binary);
+        if (!output) {
+            result.error = "Failed to open output file for writing: " + filePath;
+            Logger::Error("{}", result.error);
+            return result;
+        }
+        output.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+        output.close();
+        if (!output.good()) {
+            result.error = "Failed to write fixed PE file: " + filePath;
+            Logger::Error("{}", result.error);
+            return result;
+        }
+
+        result.success = true;
+        result.importCount = totalImports;
+        result.dllCount = static_cast<int>(importGroups.size());
+        Logger::Info("IAT reconstruction complete: {} imports from {} DLLs written to {}",
+                     totalImports, importGroups.size(), filePath);
+
+    } catch (const std::exception& e) {
+        result.error = std::string("Exception during IAT reconstruction: ") + e.what();
+        Logger::Error("{}", result.error);
+    }
+    return result;
 }
 
 void DumpManager::SetOEPDetectionStrategy(

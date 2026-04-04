@@ -214,52 +214,38 @@ nlohmann::json DumpHandler::GetDumpableRegions(const nlohmann::json& params) {
 }
 
 nlohmann::json DumpHandler::FixImports(const nlohmann::json& params) {
-    // 妫€鏌ュ啓鏉冮檺
     if (!PermissionChecker::Instance().IsMemoryWriteAllowed()) {
         throw PermissionDeniedException("Fixing imports requires write permission");
     }
-    
-    // 楠岃瘉鍙傛暟
+
+    if (!params.contains("file_path")) {
+        throw InvalidParamsException("Missing required parameter: file_path");
+    }
     if (!params.contains("module_base")) {
         throw InvalidParamsException("Missing required parameter: module_base");
     }
-    
-    if (!params.contains("buffer")) {
-        throw InvalidParamsException("Missing required parameter: buffer");
-    }
-    
+
+    std::string filePath = params["file_path"].get<std::string>();
     std::string baseStr = params["module_base"].get<std::string>();
     uint64_t moduleBase = StringUtils::ParseAddress(baseStr);
-    
-    // 浠嶫SON鏁扮粍杞崲涓哄瓧鑺傚悜閲?
-    std::vector<uint8_t> buffer;
-    for (const auto& byte : params["buffer"]) {
-        buffer.push_back(byte.get<uint8_t>());
+
+    std::optional<uint32_t> oepRva;
+    if (params.contains("oep") && !params["oep"].is_null()) {
+        uint64_t oep = StringUtils::ParseAddress(params["oep"].get<std::string>());
+        oepRva = static_cast<uint32_t>(oep);
     }
-    
-    bool useScylla = params.value("use_scylla", false);
-    
+
     auto& manager = DumpManager::Instance();
-    bool success;
-    
-    if (useScylla) {
-        success = manager.ScyllaRebuildImports(moduleBase, buffer);
-    } else {
-        success = manager.FixImportTable(moduleBase, buffer);
-    }
-    
+    auto fixResult = manager.FixImportsFromFile(filePath, moduleBase, oepRva);
+
     nlohmann::json result;
-    result["success"] = success;
-    
-    if (success) {
-        // 杞崲鍥濲SON鏁扮粍
-        nlohmann::json bufferArray = nlohmann::json::array();
-        for (uint8_t byte : buffer) {
-            bufferArray.push_back(byte);
-        }
-        result["fixed_buffer"] = bufferArray;
+    result["success"] = fixResult.success;
+    result["import_count"] = fixResult.importCount;
+    result["dll_count"] = fixResult.dllCount;
+    result["file_path"] = fixResult.filePath;
+    if (!fixResult.success && !fixResult.error.empty()) {
+        result["error"] = fixResult.error;
     }
-    
     return result;
 }
 
