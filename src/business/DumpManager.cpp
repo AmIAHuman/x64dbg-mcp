@@ -1741,7 +1741,7 @@ bool DumpManager::ScanAndResolveIAT(
     }
 
     // Strategy 3: Heuristic scan — look for pointer-sized runs of valid API addresses
-    // in writable/readable non-executable sections
+    // in any readable section (including executable, since packers like UPX place IAT there)
     Logger::Info("Attempting heuristic IAT scan");
     const auto* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(
         reinterpret_cast<const uint8_t*>(ntHeaders) + sizeof(IMAGE_NT_HEADERS));
@@ -1753,11 +1753,10 @@ bool DumpManager::ScanAndResolveIAT(
     for (WORD secIdx = 0; secIdx < sectionCount; ++secIdx) {
         const auto& sec = sections[secIdx];
 
-        // Look in readable, non-executable sections with data
+        // Look in any readable section with enough data for at least 3 pointers
         bool readable = (sec.Characteristics & IMAGE_SCN_MEM_READ) != 0;
-        bool executable = (sec.Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
         uint32_t secSpan = std::max(sec.Misc.VirtualSize, sec.SizeOfRawData);
-        if (!readable || executable || secSpan < ptrSize * 3) {
+        if (!readable || secSpan < ptrSize * 3) {
             continue;
         }
 
