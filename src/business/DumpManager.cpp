@@ -659,17 +659,6 @@ DumpResult DumpManager::DumpModule(
             }
         }
         
-        updateProgress(DumpProgress::Stage::FixingImports, 50, "Fixing import table");
-        
-        // 淇瀵煎叆琛?
-        if (options.fixImports) {
-            if (ScyllaRebuildImports(moduleBase, buffer)) {
-                Logger::Info("Import table rebuilt successfully");
-            } else {
-                Logger::Warning("Failed to rebuild import table, using fallback");
-                FixImportTable(moduleBase, buffer);
-            }
-        }
         
         updateProgress(DumpProgress::Stage::FixingRelocations, 70, "Fixing relocations");
         
@@ -699,6 +688,18 @@ DumpResult DumpManager::DumpModule(
         
         if (!outFile.good()) {
             throw MCPException("Failed to write dump file");
+        }
+        
+        // Fix imports using file-based IAT reconstruction from live process
+        if (options.fixImports) {
+            updateProgress(DumpProgress::Stage::FixingImports, 85, "Fixing import table");
+            auto fixResult = FixImportsFromFile(outputPath, moduleBase, std::nullopt);
+            if (fixResult.success) {
+                Logger::Info("Import table reconstructed: {} imports from {} DLLs",
+                             fixResult.importCount, fixResult.dllCount);
+            } else {
+                Logger::Warning("Import reconstruction failed: {}", fixResult.error);
+            }
         }
         
         result.success = true;
