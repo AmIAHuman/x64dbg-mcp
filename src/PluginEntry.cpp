@@ -25,7 +25,7 @@
 #include <fstream>
 
 // 鎻掍欢鐗堟湰淇℃�?
-#define PLUGIN_VERSION "1.0.3"
+#define PLUGIN_VERSION "1.0.5"
 
 // 鍙�?CMake 瑕嗙洊锛歅LUGIN_DISPLAY_NAME, PLUGIN_DIR_NAME
 #ifndef PLUGIN_DISPLAY_NAME
@@ -336,7 +336,7 @@ static void CB_MenuEntry(CBTYPE cbType, void* callbackInfo) {
             sprintf_s(aboutMsg, "[MCP] %s Plugin v%s", PLUGIN_DISPLAY_NAME, PLUGIN_VERSION);
             _plugin_logputs(aboutMsg);
             _plugin_logputs("[MCP] Provides JSON-RPC debugging interface");
-            _plugin_logputs("[MCP] https://github.com/SetsunaYukiOvO/x64dbg-mcp");
+            _plugin_logprintf("[MCP] GitHub: https://github.com/SetsunaYukiOvO/x64dbg-mcp (v%s)\n", PLUGIN_VERSION);
         }
     } catch (const std::exception& e) {
         _plugin_logprintf("[MCP] Menu callback error: %s\n", e.what());
