@@ -1482,7 +1482,9 @@ bool DumpManager::RebuildPEHeaders(uint64_t moduleBase, std::vector<uint8_t>& bu
 FixImportsResult DumpManager::FixImportsFromFile(
     const std::string& filePath,
     uint64_t moduleBase,
-    std::optional<uint32_t> oepRva)
+    std::optional<uint32_t> oepRva,
+    std::optional<uint64_t> searchStart,
+    bool advancedSearch)
 {
     FixImportsResult result;
     result.filePath = filePath;
@@ -1527,11 +1529,17 @@ FixImportsResult DumpManager::FixImportsFromFile(
     DWORD pid = 0;
 #endif
 
-    Logger::Info("[fix_imports] Starting Scylla IAT fix: file={}, moduleBase=0x{:X}, pid={}",
-                 filePath, moduleBase, pid);
+    DWORD_PTR iatSearchStart = searchStart.has_value()
+        ? static_cast<DWORD_PTR>(searchStart.value())
+        : static_cast<DWORD_PTR>(moduleBase);
+
+    Logger::Info("[fix_imports] Starting Scylla IAT fix: file={}, moduleBase=0x{:X}, "
+                 "searchStart=0x{:X}, advanced={}, pid={}",
+                 filePath, moduleBase, static_cast<uint64_t>(iatSearchStart),
+                 advancedSearch, pid);
 
     // Step 1: Find IAT
-    auto searchResult = scylla.IatSearch(pid, static_cast<DWORD_PTR>(moduleBase), true);
+    auto searchResult = scylla.IatSearch(pid, iatSearchStart, advancedSearch);
     if (!searchResult.success) {
         result.error = "Scylla IAT search failed: " + searchResult.errorMessage;
         Logger::Error("[fix_imports] {}", result.error);
@@ -1550,8 +1558,57 @@ FixImportsResult DumpManager::FixImportsFromFile(
         return result;
     }
 
+    // Step 3: Parse the fixed PE to count actual imports
+    try {
+        auto fsPath = ToFilesystemPath(filePath);
+        std::ifstream input(fsPath, std::ios::binary);
+        if (input) {
+            IMAGE_DOS_HEADER dosHeader;
+            input.read(reinterpret_cast<char*>(&dosHeader), sizeof(dosHeader));
+            if (dosHeader.e_magic == IMAGE_DOS_SIGNATURE) {
+                input.seekg(dosHeader.e_lfanew, std::ios::beg);
+                IMAGE_NT_HEADERS ntHeaders;
+                input.read(reinterpret_cast<char*>(&ntHeaders), sizeof(ntHeaders));
+                if (ntHeaders.Signature == IMAGE_NT_SIGNATURE) {
+                    auto importDir = ntHeaders.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+                    if (importDir.VirtualAddress != 0 && importDir.Size > 0) {
+                        // Import directory file offset = RVA (memory-layout dump)
+                        input.seekg(importDir.VirtualAddress, std::ios::beg);
+                        int dllCount = 0;
+                        int importCount = 0;
+                        while (true) {
+                            IMAGE_IMPORT_DESCRIPTOR desc;
+                            input.read(reinterpret_cast<char*>(&desc), sizeof(desc));
+                            if (!input || (desc.OriginalFirstThunk == 0 && desc.FirstThunk == 0))
+                                break;
+                            dllCount++;
+                            // Count functions via thunk array
+                            auto saved = input.tellg();
+                            uint32_t thunkRva = desc.OriginalFirstThunk
+                                ? desc.OriginalFirstThunk : desc.FirstThunk;
+                            input.seekg(thunkRva, std::ios::beg);
+                            while (true) {
+                                uint64_t thunk = 0;
+                                input.read(reinterpret_cast<char*>(&thunk), sizeof(thunk));
+                                if (!input || thunk == 0) break;
+                                importCount++;
+                            }
+                            input.clear();
+                            input.seekg(saved);
+                        }
+                        result.dllCount = dllCount;
+                        result.importCount = importCount;
+                    }
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        Logger::Warning("[fix_imports] Failed to count imports: {}", e.what());
+    }
+
     result.success = true;
-    Logger::Info("[fix_imports] Scylla IAT fix complete: {}", filePath);
+    Logger::Info("[fix_imports] Complete: file={}, dlls={}, imports={}",
+                 filePath, result.dllCount, result.importCount);
     return result;
 }
 

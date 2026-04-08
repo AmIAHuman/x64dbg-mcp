@@ -752,12 +752,17 @@ void MCPToolRegistry::RegisterDefaultTools() {
         "dump_fix_imports",
         "Fix imports in a dumped PE using Scylla IAT reconstruction. "
         "Searches for the IAT in the live process, resolves all imports, "
-        "and writes a fixed PE with a rebuilt import table.",
+        "and writes a fixed PE with a rebuilt import table. "
+        "Returns import_count and dll_count for verification. "
+        "If import_count is too high (garbage), retry with advanced_search=false "
+        "or a more targeted search_start address.",
         "dump.fix_imports",
         {
             {"file_path", "string", "Path to the dumped PE file on disk", true, nullptr, nullptr},
             {"module_base", "string", "Module base address in the debugged process", true, nullptr, nullptr},
-            {"oep", "string", "Original Entry Point RVA to set (optional)", false, nullptr, nullptr}
+            {"oep", "string", "OEP RVA to set in PE header before fixing (optional)", false, nullptr, nullptr},
+            {"search_start", "string", "Address to start IAT search (default: module_base). Use OEP or .text section for more targeted results", false, nullptr, nullptr},
+            {"advanced_search", "boolean", "true=thorough disassembly scan (default), false=quick scan. Try false if advanced returns too many garbage imports", false, "true", nullptr}
         }
     });
     

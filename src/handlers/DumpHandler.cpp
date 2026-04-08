@@ -175,12 +175,23 @@ nlohmann::json DumpHandler::FixImports(const nlohmann::json& params) {
         oepRva = static_cast<uint32_t>(oep);
     }
 
-    Logger::Info("[fix_imports] file={}, module_base=0x{:X}, oep={}",
+    std::optional<uint64_t> searchStart;
+    if (params.contains("search_start") && !params["search_start"].is_null()) {
+        searchStart = StringUtils::ParseAddress(params["search_start"].get<std::string>());
+    }
+
+    bool advancedSearch = params.value("advanced_search", true);
+
+    Logger::Info("[fix_imports] file={}, module_base=0x{:X}, oep={}, "
+                 "search_start={}, advanced={}",
                  filePath, moduleBase,
-                 oepRva.has_value() ? StringUtils::FormatAddress(oepRva.value()) : "none");
+                 oepRva.has_value() ? StringUtils::FormatAddress(oepRva.value()) : "none",
+                 searchStart.has_value() ? StringUtils::FormatAddress(searchStart.value()) : "default",
+                 advancedSearch);
 
     auto& manager = DumpManager::Instance();
-    auto fixResult = manager.FixImportsFromFile(filePath, moduleBase, oepRva);
+    auto fixResult = manager.FixImportsFromFile(
+        filePath, moduleBase, oepRva, searchStart, advancedSearch);
 
     nlohmann::json result;
     result["success"] = fixResult.success;

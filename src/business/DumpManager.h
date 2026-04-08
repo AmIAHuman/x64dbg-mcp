@@ -210,7 +210,9 @@ public:
     FixImportsResult FixImportsFromFile(
         const std::string& filePath,
         uint64_t moduleBase,
-        std::optional<uint32_t> oepRva = std::nullopt
+        std::optional<uint32_t> oepRva = std::nullopt,
+        std::optional<uint64_t> searchStart = std::nullopt,
+        bool advancedSearch = true
     );
     
     /**
