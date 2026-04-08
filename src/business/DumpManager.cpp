@@ -643,7 +643,14 @@ DumpResult DumpManager::DumpModule(
             };
 
             if (options.forcedOEP.has_value()) {
-                if (!trySetOEP(options.forcedOEP.value(), "Forced")) {
+                uint64_t oep = options.forcedOEP.value();
+                if (oep < moduleBase && oep < moduleSize) {
+                    throw InvalidParamsException(
+                        "OEP " + StringUtils::FormatAddress(oep) +
+                        " looks like an RVA — pass the full virtual address (e.g. " +
+                        StringUtils::FormatAddress(moduleBase + oep) + ") instead");
+                }
+                if (!trySetOEP(oep, "Forced")) {
                     throw InvalidParamsException("Forced OEP is outside target module range");
                 }
             } else if (options.autoDetectOEP) {

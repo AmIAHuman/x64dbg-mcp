@@ -723,7 +723,7 @@ void MCPToolRegistry::RegisterDefaultTools() {
             {"auto_detect_oep", "boolean", "Auto-detect OEP", false, false, nullptr},
             {"dump_full_image", "boolean", "Dump full image including non-committed pages", false, false, nullptr},
             {"options", "object", "Optional nested options object (legacy compatibility)", false, nullptr, nullptr},
-            {"oep", "string", "Original Entry Point (optional)", false, nullptr, nullptr}
+            {"oep", "string", "Original Entry Point — must be full virtual address, not RVA (optional)", false, nullptr, nullptr}
         }
     });
     
@@ -760,7 +760,7 @@ void MCPToolRegistry::RegisterDefaultTools() {
         {
             {"file_path", "string", "Path to the dumped PE file on disk", true, nullptr, nullptr},
             {"module_base", "string", "Module base address in the debugged process", true, nullptr, nullptr},
-            {"oep", "string", "OEP RVA to set in PE header before fixing (optional)", false, nullptr, nullptr},
+            {"oep", "string", "OEP as full virtual address (accepts both VA and RVA)", false, nullptr, nullptr},
             {"search_start", "string", "Address to start IAT search (default: module_base). Use OEP or .text section for more targeted results", false, nullptr, nullptr},
             {"advanced_search", "boolean", "true=thorough disassembly scan (default), false=quick scan. Try false if advanced returns too many garbage imports", false, "true", nullptr}
         }

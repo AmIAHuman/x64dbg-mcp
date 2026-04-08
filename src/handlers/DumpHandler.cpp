@@ -172,6 +172,9 @@ nlohmann::json DumpHandler::FixImports(const nlohmann::json& params) {
     std::optional<uint32_t> oepRva;
     if (params.contains("oep") && !params["oep"].is_null()) {
         uint64_t oep = StringUtils::ParseAddress(params["oep"].get<std::string>());
+        if (oep >= moduleBase) {
+            oep = oep - moduleBase;
+        }
         oepRva = static_cast<uint32_t>(oep);
     }
 
