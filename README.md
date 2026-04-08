@@ -42,7 +42,23 @@ A Model Context Protocol (MCP) server implementation for x64dbg and x32dbg, enab
 - **Security**: Permission-based access control
 - **Extensible**: Plugin architecture for custom methods, resources, and prompts
 
-## What's New in v1.0.3
+## What's New in v1.0.7
+
+- **Scylla DLL Integration for IAT Reconstruction**
+  - `dump.module` and `dump.fix_imports` now delegate to Scylla.dll for import table reconstruction
+  - Loads `Scylla.dll` (or `ScyllaDLLx64.dll`) from the x64dbg root directory at plugin startup
+  - Full logging: IAT search results, fix results, error codes, Scylla version
+
+- **Removed Tools** (agent handles these via playbook strategies)
+  - `dump.analyze_module` — removed (agent detects packers using x64dbg + Ghidra)
+  - `dump.detect_oep` — removed (agent learns OEP detection through playbooks)
+  - `dump.rebuild_pe` — removed (`dump.module` handles PE rebuild internally)
+
+- **Deleted ~740 lines of custom IAT code** replaced by Scylla DLL calls
+
+## Previous Releases
+
+### v1.0.3
 
 - **Generalized Unpacking (Not UPX-only)**
   - Expanded transfer/OEP recognition patterns (`E9`, `EB`, `FF25`, `push-ret`, `mov-jmp`, `movabs-jmp`)
