@@ -740,26 +740,6 @@ void MCPToolRegistry::RegisterDefaultTools() {
     });
     
     RegisterTool({
-        "dump_analyze_module",
-        "Analyze module and detect packer",
-        "dump.analyze_module",
-        {
-            {"module", "string", "Module name or base address (optional, defaults to main module)", false, nullptr, nullptr}
-        }
-    });
-    
-    RegisterTool({
-        "dump_detect_oep",
-        "Detect Original Entry Point (OEP)",
-        "dump.detect_oep",
-        {
-            {"module", "string", "Module name or base address", true, nullptr, nullptr},
-            {"strategy", "string", "Detection strategy (entropy, code_analysis, api_calls, tls, entrypoint)", false, "code_analysis",
-             json::array({"entropy", "code_analysis", "api_calls", "tls", "entrypoint"})}
-        }
-    });
-    
-    RegisterTool({
         "dump_get_dumpable_regions",
         "List dumpable memory regions",
         "dump.get_dumpable_regions",
@@ -770,26 +750,14 @@ void MCPToolRegistry::RegisterDefaultTools() {
     
     RegisterTool({
         "dump_fix_imports",
-        "Reconstruct import address table (IAT) from live process memory. "
-        "Reads resolved API pointers from the debuggee's memory, resolves them "
-        "to DLL+function names, and writes a new import table into the PE file on disk.",
+        "Fix imports in a dumped PE using Scylla IAT reconstruction. "
+        "Searches for the IAT in the live process, resolves all imports, "
+        "and writes a fixed PE with a rebuilt import table.",
         "dump.fix_imports",
         {
             {"file_path", "string", "Path to the dumped PE file on disk", true, nullptr, nullptr},
             {"module_base", "string", "Module base address in the debugged process", true, nullptr, nullptr},
             {"oep", "string", "Original Entry Point RVA to set (optional)", false, nullptr, nullptr}
-        }
-    });
-    
-    RegisterTool({
-        "dump_rebuild_pe",
-        "Rebuild PE header and sections",
-        "dump.rebuild_pe",
-        {
-            {"module_base", "string", "Module base address", true, nullptr, nullptr},
-            {"buffer", "array", "PE file data as byte array", true, nullptr, nullptr,
-             json{{"type", "integer"}}},
-            {"new_ep", "string", "New entry point RVA (optional)", false, nullptr, nullptr}
         }
     });
     

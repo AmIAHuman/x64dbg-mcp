@@ -16,7 +16,7 @@ A Model Context Protocol (MCP) server implementation for x64dbg and x32dbg, enab
 - **JSON-RPC 2.0 Protocol**: Standard, language-agnostic interface
 - **HTTP + SSE Communication**: Modern web-based integration via Server-Sent Events
 
-- **Tools - AI-Controlled Debugging (74 functions)**:
+- **Tools - AI-Controlled Debugging (71 functions)**:
   - Execution control (run, pause, step, run_to, load_binary)
   - Memory read/write/search/allocate
   - Register access (50+ registers including GPR, SSE, AVX)
@@ -24,7 +24,7 @@ A Model Context Protocol (MCP) server implementation for x64dbg and x32dbg, enab
   - Disassembly and symbol resolution
   - Thread management (list, switch, suspend, resume)
   - Stack trace and analysis
-  - **Dump & Unpacking** (module dump, memory dump, auto-unpacking, OEP detection, IAT reconstruction)
+  - **Dump & IAT Reconstruction** (module dump, memory dump, Scylla-based IAT fix, dumpable region listing)
   - **Script execution** (execute x64dbg commands, batch operations)
   - **Context snapshots** (capture and compare debugging state)
   

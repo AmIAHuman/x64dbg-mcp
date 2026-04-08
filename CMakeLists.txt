@@ -74,6 +74,7 @@ set(BUSINESS_SOURCES
     src/business/StackManager.cpp
     src/business/ThreadManager.cpp
     src/business/DumpManager.cpp
+    src/business/ScyllaWrapper.cpp
 )
 
 set(HANDLER_SOURCES

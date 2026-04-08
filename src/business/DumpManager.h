@@ -201,19 +201,11 @@ public:
                          std::optional<uint32_t> newEP = std::nullopt);
     
     /**
-     * @brief 从内存重建导入表(Scylla风格) — buffer-based, used internally by DumpModule
-     * @param moduleBase 模块基址
-     * @param buffer PE文件缓冲区
-     * @return 是否成功
-     */
-    bool ScyllaRebuildImports(uint64_t moduleBase, std::vector<uint8_t>& buffer);
-
-    /**
-     * @brief File-based IAT reconstruction from live process memory
+     * @brief Fix imports via Scylla DLL IAT reconstruction
      * @param filePath Path to the dumped PE file on disk
      * @param moduleBase Module base address in the debugged process
      * @param oepRva Optional OEP RVA to set in the fixed PE
-     * @return Result with import count and success status
+     * @return Result with success status
      */
     FixImportsResult FixImportsFromFile(
         const std::string& filePath,
@@ -259,36 +251,8 @@ private:
     bool AlignPESections(std::vector<uint8_t>& buffer);
     bool RemoveCodeSection(std::vector<uint8_t>& buffer, const std::string& sectionName);
 
-public:
-    // IAT reconstruction types (public for helper functions)
-    struct ResolvedImport {
-        std::string dllName;
-        std::string functionName;
-        uint16_t ordinal = 0;
-        bool importByOrdinal = false;
-    };
-
-    struct ImportGroup {
-        std::string dllName;
-        std::vector<ResolvedImport> functions;
-        std::vector<uint32_t> iatSlotRvas;
-    };
-
 private:
-    bool ScanAndResolveIAT(
-        uint64_t moduleBase,
-        const std::vector<uint8_t>& peBuffer,
-        std::vector<ImportGroup>& outGroups
-    );
-
-    bool BuildAndWriteImportSection(
-        std::vector<uint8_t>& peBuffer,
-        const std::vector<ImportGroup>& groups,
-        uint32_t sectionAlignment,
-        uint32_t fileAlignment
-    );
-    
-    // 用户自定义OEP检测策略
+    // Custom OEP detection strategy
     std::function<std::optional<uint64_t>(uint64_t)> m_oepDetectionStrategy;
 };
 
