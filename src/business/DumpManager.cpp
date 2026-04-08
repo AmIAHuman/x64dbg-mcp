@@ -1558,7 +1558,9 @@ FixImportsResult DumpManager::FixImportsFromFile(
         return result;
     }
 
-    // Step 3: Parse the fixed PE to count actual imports
+    // Step 3: Parse the fixed PE to count actual imports.
+    // Scylla adds a .SCY section with different VA/RawPtr alignment,
+    // so we must convert RVA → file offset via the section table.
     try {
         auto fsPath = ToFilesystemPath(filePath);
         std::ifstream input(fsPath, std::ios::binary);
@@ -1570,34 +1572,65 @@ FixImportsResult DumpManager::FixImportsFromFile(
                 IMAGE_NT_HEADERS ntHeaders;
                 input.read(reinterpret_cast<char*>(&ntHeaders), sizeof(ntHeaders));
                 if (ntHeaders.Signature == IMAGE_NT_SIGNATURE) {
+                    // Read section headers
+                    const WORD sectionCount = ntHeaders.FileHeader.NumberOfSections;
+                    std::vector<IMAGE_SECTION_HEADER> sections(sectionCount);
+                    input.read(reinterpret_cast<char*>(sections.data()),
+                               sectionCount * sizeof(IMAGE_SECTION_HEADER));
+
+                    // RVA → file offset using section table
+                    auto rvaToFileOffset = [&](uint32_t rva) -> int64_t {
+                        for (const auto& sec : sections) {
+                            uint32_t secEnd = sec.VirtualAddress +
+                                std::max(sec.Misc.VirtualSize, sec.SizeOfRawData);
+                            if (rva >= sec.VirtualAddress && rva < secEnd) {
+                                return static_cast<int64_t>(sec.PointerToRawData)
+                                    + (rva - sec.VirtualAddress);
+                            }
+                        }
+                        return -1;
+                    };
+
                     auto importDir = ntHeaders.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
                     if (importDir.VirtualAddress != 0 && importDir.Size > 0) {
-                        // Import directory file offset = RVA (memory-layout dump)
-                        input.seekg(importDir.VirtualAddress, std::ios::beg);
-                        int dllCount = 0;
-                        int importCount = 0;
-                        while (true) {
-                            IMAGE_IMPORT_DESCRIPTOR desc;
-                            input.read(reinterpret_cast<char*>(&desc), sizeof(desc));
-                            if (!input || (desc.OriginalFirstThunk == 0 && desc.FirstThunk == 0))
-                                break;
-                            dllCount++;
-                            // Count functions via thunk array
-                            auto saved = input.tellg();
-                            uint32_t thunkRva = desc.OriginalFirstThunk
-                                ? desc.OriginalFirstThunk : desc.FirstThunk;
-                            input.seekg(thunkRva, std::ios::beg);
+                        int64_t importFileOff = rvaToFileOffset(importDir.VirtualAddress);
+                        if (importFileOff < 0) {
+                            Logger::Warning("[fix_imports] Cannot map import dir RVA 0x{:X} to file offset",
+                                            importDir.VirtualAddress);
+                        } else {
+                            input.seekg(importFileOff, std::ios::beg);
+                            int dllCount = 0;
+                            int importCount = 0;
                             while (true) {
-                                uint64_t thunk = 0;
-                                input.read(reinterpret_cast<char*>(&thunk), sizeof(thunk));
-                                if (!input || thunk == 0) break;
-                                importCount++;
+                                IMAGE_IMPORT_DESCRIPTOR desc;
+                                input.read(reinterpret_cast<char*>(&desc), sizeof(desc));
+                                if (!input || (desc.OriginalFirstThunk == 0 && desc.FirstThunk == 0))
+                                    break;
+                                dllCount++;
+                                // Count functions via thunk array
+                                auto saved = input.tellg();
+                                uint32_t thunkRva = desc.OriginalFirstThunk
+                                    ? desc.OriginalFirstThunk : desc.FirstThunk;
+                                int64_t thunkOff = rvaToFileOffset(thunkRva);
+                                if (thunkOff < 0) {
+                                    input.seekg(saved);
+                                    continue;
+                                }
+                                input.seekg(thunkOff, std::ios::beg);
+                                while (true) {
+                                    uint64_t thunk = 0;
+                                    input.read(reinterpret_cast<char*>(&thunk), sizeof(thunk));
+                                    if (!input || thunk == 0) break;
+                                    importCount++;
+                                }
+                                input.clear();
+                                input.seekg(saved);
                             }
-                            input.clear();
-                            input.seekg(saved);
+                            result.dllCount = dllCount;
+                            result.importCount = importCount;
+                            Logger::Info("[fix_imports] Import count: {} functions from {} DLLs",
+                                         importCount, dllCount);
                         }
-                        result.dllCount = dllCount;
-                        result.importCount = importCount;
                     }
                 }
             }
